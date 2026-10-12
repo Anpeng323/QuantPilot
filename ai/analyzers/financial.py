@@ -44,6 +44,50 @@ def build_context(stock_code: str) -> tuple:
         ["日期", "20日动量", "60日动量", "20日波动率", "MA20偏离", "量比"],
         max_rows=5,
     )
+
+    # 财务核心指标（finance_core，最新 8 期）
+    fin = conn.execute("""
+        SELECT report_date, eps, roe, gross_margin, revenue, net_profit,
+               yoy_revenue, yoy_profit
+        FROM finance_core WHERE stock_code=?
+        ORDER BY report_date DESC LIMIT 8
+    """, [stock_code]).fetchall()
+    if fin:
+        ctx += "\n\n## 财务核心指标（近 8 期，来自 finance_core）\n"
+        ctx += _fmt_table(
+            list(reversed(fin)),
+            ["报告期", "EPS", "ROE%", "毛利率%", "营收(元)", "净利润(元)",
+             "营收同比%", "净利同比%"],
+            max_rows=8,
+        )
+        latest = fin[0]
+        ctx += (f"\n> 最新报告期 {latest[0]}：EPS={latest[1]}, ROE={latest[2]}%, "
+                f"毛利率={latest[3]}%, 营收={latest[4]:.0f}元, 净利润={latest[5]:.0f}元, "
+                f"营收同比={latest[6]}%, 净利同比={latest[7]}%\n")
+
+    # 风险科目（来自三表明细 finance_statement 最新一期）
+    risk = conn.execute("""
+        SELECT item_key, item_name, value FROM finance_statement
+        WHERE stock_code=? AND statement_type IN ('balance','cashflow')
+          AND item_key IN ('total_assets','total_liab','accounts_rece','inventory',
+                           'goodwill','net_operate_cf')
+          AND report_date = (SELECT MAX(report_date) FROM finance_statement
+                             WHERE stock_code=? AND statement_type IN ('balance','cashflow'))
+    """, [stock_code, stock_code]).fetchall()
+    if risk:
+        ctx += "\n## 关键风险科目（最新报告期，来自 finance_statement）\n"
+        ctx += _fmt_table(risk, ["科目键", "科目", "数值(元)"], max_rows=10)
+        # 简单勾稽：应收账款/存货/商誉 与总资产比
+        d = {r[0]: r[2] for r in risk}
+        ta = d.get("total_assets")
+        if ta:
+            for k in ("accounts_rece", "inventory", "goodwill", "net_operate_cf"):
+                if d.get(k) is not None:
+                    ctx += f"- {k} 占资产比 = {d[k]/ta*100:.1f}%\n"
+    else:
+        ctx += "\n\n> 注：finance_core / finance_statement 暂无该股票数据，财报解读缺少财务明细，"
+        ctx += "仅基于行情与因子（建议先运行 data_ingest.finance_statements / finance_adata 接入）。\n"
+
     return info, ctx
 
 

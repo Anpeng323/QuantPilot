@@ -30,7 +30,7 @@
 **真正的缺口**（决定了后续工作的重心）：
 
 1. **数据是空的**：`stock_industry` 刚补到 5048/5640 只；`finance_core` 仅 40 只（盘后 18:30 定时任务回填中）。
-2. **财务三表不完整**：`finance_balance`/`finance_profit`/`finance_cashflow` 三张表**不存在**（只有聚合的 `finance_core`）。
+2. **财务三表已接入（长表）**：`finance_statement`（EAV 长表，覆盖三表明细常用科目）已建表并由 `data_ingest/finance_statements.py`（akshare 东方财富口径，免 token）接入；`macro_indicator`（CPI/PMI/LPR）由 `data_ingest/macro.py` 接入。两者均已挂入盘后回填定时任务（18:30）。`finance_core` 仍有 40 只（盘后回填中）。
 3. **分析器缺 4 类**：`industry.py`（行业）、`macro.py`（宏观）、`comparative.py`（多公司对比）、`valuation/dcf.py`（DCF）**文件不存在**。现有 `valuation.py` 仅为"基于历史价格的简化模板"，注释明确写"需接入财报库"。
 4. **Agent 模块完全不存在**（0 文件）。
 5. **文本/产业链类缺失**：公告抓取（仅路由、无爬虫）、资讯自动抓取与去噪、研报 OCR（扫描件）、宏观数据（CPI/PMI/利率）、产业链图谱——均无。
@@ -134,7 +134,8 @@
 
 **已有表**（DuckDB `data/quant.duckdb`）：`stock_basic`、`trade_calendar`、`daily_kline`、`minute_kline`、`index_kline`、`factors_daily`、`stock_industry`（5048）、`finance_core`（40 只，回填中）、`doc`（RAG/公告/新闻统一存，含 `doc_type`）、`note`、`watchlist*`、`alert_*`、`portfolio*`、`ai_analysis`、`prompt_template`、`memory`。
 
-**缺失表**：`finance_balance`、`finance_profit`、`finance_cashflow`（三张明细表）、`macro_indicator`、`industry_chain`、`announcement`（可用 `doc` 表 `doc_type='announcement'` 替代）。
+**缺失表**：`industry_chain`、`announcement`（可用 `doc` 表 `doc_type='announcement'` 替代）。
+**已补表**：`finance_statement`（三表明细长表，替代原计划的 balance/profit/cashflow 三张宽表）、`macro_indicator`（CPI/PMI/LPR）。
 
 **数据来源策略**（个人免费额度）：
 - 行情/指数/ETF/分钟：`adata` + 新浪（已落地）
@@ -222,7 +223,7 @@
 
 | Phase | 关键交付 | 状态 |
 |---|---|---|
-| A 数据夯实 | 三表明细/宏观/公告/数据接入分析器/EasyMDE/文档 | 🟡 进行中（finance_core+industry 回填已启动） |
+| A 数据夯实 | 三表明细/宏观/公告/数据接入分析器/EasyMDE/文档 | 🟡 进行中（✅三表明细`finance_statement`+宏观`macro_indicator`已接入并挂回填；✅`finance_core`已接通`financial.py`/`valuation.py`；⏳公告爬虫/周线/EasyMDE/文档待做） |
 | B 分析深度 | industry/macro/comparative/DCF/风险接公告/盈利拆解 | ❌ |
 | C 文本产业链 | 资讯去噪/研报OCR/产业链/对比问答 | ❌ |
 | D 工作台 | 研究卡片/看板/规则库/复盘αβ/记忆 | ❌ |

@@ -9,12 +9,12 @@
     <key>WorkingDirectory</key>
     <string>/Users/quanlin/Desktop/项目/AI量化/quant_db</string>
 
-    <!-- 盘后回填基本面：申万行业 + 核心财务（增量：已有则跳过） -->
+    <!-- 盘后回填基本面：申万行业 + 核心财务 + 三表明细 + 宏观（均增量：已有则跳过） -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
         <string>-lc</string>
-        <string>source .venv/bin/activate &amp;&amp; python3 -m data_ingest.industry &amp;&amp; python3 -m data_ingest.finance_adata &gt;&gt; logs/backfill.out.log 2&gt;&amp;1</string>
+        <string>source .venv/bin/activate &amp;&amp; python3 -m data_ingest.industry &amp;&amp; python3 -m data_ingest.finance_adata &amp;&amp; python3 -m data_ingest.finance_statements &amp;&amp; python3 -m data_ingest.macro &gt;&gt; logs/backfill.out.log 2&gt;&amp;1</string>
     </array>
 
     <!-- 每天 18:30（收盘后、日常使用低峰）触发 -->

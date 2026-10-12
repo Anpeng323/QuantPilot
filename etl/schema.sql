@@ -365,3 +365,26 @@ CREATE TABLE IF NOT EXISTS alert_event (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_event_rule ON alert_event(rule_id);
 CREATE INDEX IF NOT EXISTS idx_alert_event_time ON alert_event(triggered_at DESC);
+
+-- ========== v1.1 增量：财务三表明细（长表 EAV） ==========
+-- 东方财富口径（akshare 免费），按报告期存储投研常用科目，兼容银行/制造业差异
+CREATE TABLE IF NOT EXISTS finance_statement (
+    stock_code     VARCHAR(6),
+    statement_type VARCHAR(8),    -- balance / profit / cashflow
+    report_date    DATE,
+    item_key       VARCHAR(40),   -- 规范化科目键（英文）
+    item_name      VARCHAR(60),   -- 中文名（可读）
+    value          DOUBLE,
+    PRIMARY KEY (stock_code, statement_type, report_date, item_key)
+);
+CREATE INDEX IF NOT EXISTS idx_fin_stmt_stock ON finance_statement(stock_code, statement_type);
+
+-- ========== v1.1 增量：宏观指标 ==========
+CREATE TABLE IF NOT EXISTS macro_indicator (
+    indicator  VARCHAR(30),   -- cpi / pmi / lpr_1y / lpr_5y / m2 ...
+    trade_date DATE,
+    value      DOUBLE,
+    unit       VARCHAR(10),
+    PRIMARY KEY (indicator, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_macro_ind ON macro_indicator(indicator);

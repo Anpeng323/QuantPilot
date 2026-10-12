@@ -27,14 +27,41 @@ def build_context(stock_code: str) -> tuple:
         FROM daily_kline WHERE stock_code=? AND k_type=1
           AND trade_date >= CURRENT_DATE - INTERVAL '365 days'
     """, [stock_code]).fetchone()
+    # 当前价 + 财务（动态计算 PE/PB/EPS/ROE/市值）
+    cur = conn.execute("""
+        SELECT close FROM daily_kline WHERE stock_code=? AND k_type=1
+        ORDER BY trade_date DESC LIMIT 1
+    """, [stock_code]).fetchone()
+    fin = conn.execute("""
+        SELECT eps, roe, gross_margin, pe, pb, total_market_cap, report_date
+        FROM finance_core WHERE stock_code=?
+        ORDER BY report_date DESC LIMIT 1
+    """, [stock_code]).fetchone()
 
     ctx  = f"## 股票\n代码: {info['stock_code']} {info['short_name']}\n\n"
+    if cur:
+        price = cur[0]
+        ctx += f"## 当前价（最新收盘）: {price:.2f} 元\n"
+        if fin:
+            eps, roe, gm, pe_db, pb_db, mcap, rdate = fin
+            ctx += f"## 财务数据（报告期 {rdate}，来自 finance_core）\n"
+            ctx += f"- EPS: {eps}\n- ROE: {roe}%\n- 毛利率: {gm}%\n"
+            if eps:
+                ctx += f"- 动态 PE（现价/EPS）: {price/eps:.1f}\n"
+            if mcap:
+                ctx += f"- 总市值（库内）: {mcap/1e8:.1f} 亿元\n"
+            if pe_db:
+                ctx += f"- PE（库内记录）: {pe_db}\n"
+            if pb_db:
+                ctx += f"- PB（库内记录）: {pb_db}\n"
+        else:
+            ctx += "\n> 注：finance_core 暂无该股票财务数据，无法计算 PE/PB，"
+            ctx += "建议先运行 data_ingest.finance_adata 接入核心财务。\n"
     if stats and stats[0]:
-        ctx += f"## 近 1 年价格统计\n- 最低: {stats[0]:.2f}\n- 最高: {stats[1]:.2f}\n- 平均: {stats[2]:.2f}\n- 30日交易天数: {stats[3]}\n\n"
-    ctx += "## 最近 30 个交易日收盘价\n"
+        ctx += f"\n## 近 1 年价格统计\n- 最低: {stats[0]:.2f}\n- 最高: {stats[1]:.2f}\n- 平均: {stats[2]:.2f}\n- 30日交易天数: {stats[3]}\n"
+    ctx += "\n## 最近 30 个交易日收盘价\n"
     for r in reversed(prices[-30:]):
         ctx += f"- {r[0]}  收盘 {r[1]}  ({(r[2] or 0):+.2f}%)\n"
-    ctx += "\n## 注\n- 完整估值需 PE/PB/EPS/ROE 等数据，需接入财报库\n- v1 仅提供基于历史价格区间的简化模板\n"
     return info, ctx
 
 
