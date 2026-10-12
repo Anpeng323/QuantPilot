@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.quanlin.quant.daily</string>
+
+    <!-- 工作目录 -->
+    <key>WorkingDirectory</key>
+    <string>/Users/quanlin/Desktop/项目/AI量化/quant_db</string>
+
+    <!-- 执行的脚本（会激活 venv 并跑每日增量） -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>source .venv/bin/activate && python3 -m etl.daily_update --datalen 30 >> logs/launchd.out.log 2>&1</string>
+    </array>
+
+    <!-- 每天 17:00（A股收盘后 1 小时左右）触发 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>17</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- 网络可用时再跑 -->
+    <key>StandardOutPath</key>
+    <string>/Users/quanlin/Desktop/项目/AI量化/quant_db/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/quanlin/Desktop/项目/AI量化/quant_db/logs/launchd.err.log</string>
+
+    <!-- 跑完不退出（launchd 会自动重试） -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- 异常退出后自动重启（间隔 5 分钟） -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>ThrottleInterval</key>
+        <integer>300</integer>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,17 @@
+# 大数据文件（2.4GB），不入库，改动前自行 cp 快照
+data/*.duckdb
+
+# 虚拟环境
+.venv/
+venv/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 日志
+*.log
+/tmp/
+
+# 系统文件
+.DS_Store

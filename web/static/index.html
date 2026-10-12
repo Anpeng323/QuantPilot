@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quant Workbench · 个人 AI 投研平台</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ 侧栏导航 ============ -->
+  <aside class="sidebar">
+    <div class="nav-section">
+      <div class="nav-section-title">数据</div>
+      <div class="nav-item active" data-panel="snapshot"><span class="nav-icon">📈</span> 全市场快照</div>
+      <div class="nav-item" data-panel="stock"><span class="nav-icon">🔍</span> 个股详情</div>
+      <div class="nav-item" data-panel="indices"><span class="nav-icon">📊</span> 指数看板</div>
+      <div class="nav-item" data-panel="indicators"><span class="nav-icon">📐</span> 技术指标</div>
+      <div class="nav-item" data-panel="sql"><span class="nav-icon">📝</span> SQL 查询</div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">投研</div>
+      <div class="nav-item" data-panel="ai"><span class="nav-icon">🤖</span> AI 分析</div>
+      <div class="nav-item" data-panel="rag"><span class="nav-icon">📚</span> RAG 知识库</div>
+      <div class="nav-item" data-panel="prompts"><span class="nav-icon">💬</span> 提示词库</div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">持仓</div>
+      <div class="nav-item" data-panel="watchlist"><span class="nav-icon">⭐</span> 自选池</div>
+      <div class="nav-item" data-panel="portfolio"><span class="nav-icon">💼</span> 持仓</div>
+      <div class="nav-item" data-panel="alerts"><span class="nav-icon">🔔</span> 预警</div>
+      <div class="nav-item" data-panel="notes"><span class="nav-icon">📔</span> 笔记</div>
+    </div>
+  </aside>
+
+  <!-- ============ 顶栏 ============ -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="logo">Q</span>
+      <span>Quant Workbench</span>
+      <span class="topbar-tagline">· 个人 AI 投研平台</span>
+    </div>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-status" id="topbar-status">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">检测中…</span>
+    </div>
+  </header>
+
+  <!-- ============ 主区域 ============ -->
+  <main class="main">
+
+    <!-- 📈 全市场快照 -->
+    <section class="panel active" id="panel-snapshot">
+      <div class="metric-row card-grid card-grid-5" id="snapshot-metrics">
+        <!-- 由 JS 填充 -->
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📈 全市场行情</div>
+          <div class="card-subtitle">所有 A 股 · 实时</div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="snap-search" placeholder="搜索股票名 / 代码（如 平安 或 000001）">
+          <select id="snap-exchange">
+            <option value="">全部</option>
+            <option value="SH">沪市</option>
+            <option value="SZ">深市</option>
+            <option value="BJ">北交所</option>
+          </select>
+          <select id="snap-sort">
+            <option value="change_pct">涨跌幅</option>
+            <option value="amount">成交额</option>
+            <option value="volume">成交量</option>
+            <option value="close">收盘价</option>
+          </select>
+          <select id="snap-order">
+            <option value="desc">降序</option>
+            <option value="asc">升序</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table id="snap-table">
+            <thead>
+              <tr>
+                <th>代码</th><th>名称</th><th>市场</th>
+                <th class="num">收盘</th><th class="num">涨跌</th><th class="num">涨跌幅%</th>
+                <th class="num">成交量(亿)</th><th class="num">成交额(亿)</th>
+              </tr>
+            </thead>
+            <tbody id="snap-tbody"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button id="snap-prev">上一页</button>
+          <span>第 <input type="number" id="snap-page" min="1" value="1"> 页</span>
+          <span id="snap-pages"></span>
+          <button id="snap-next">下一页</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 🔍 个股详情 -->
+    <section class="panel" id="panel-stock">
+      <div class="card">
+        <div class="toolbar">
+          <input type="text" id="stock-input" placeholder="输入股票名或代码 (如 平安银行 或 000001)" style="flex:1">
+          <button id="stock-go" class="primary">查询</button>
+        </div>
+        <div id="stock-card" style="display:none">
+          <div class="card-grid card-grid-4" id="stock-metrics"></div>
+        </div>
+        <div class="subtabs" id="stock-subtabs" style="display:none">
+          <button class="subtab active" data-sub="daily">日 K</button>
+          <button class="subtab" data-sub="minute">5分钟K</button>
+          <button class="subtab" data-sub="factors">因子</button>
+          <button class="subtab" data-sub="info">概览</button>
+          <select id="stock-range" style="margin-left:auto; align-self:center">
+            <option value="30">近 30 日</option>
+            <option value="60">近 60 日</option>
+            <option value="120" selected>近 120 日</option>
+            <option value="250">近 1 年</option>
+            <option value="500">近 2 年</option>
+            <option value="1000">近 4 年</option>
+            <option value="2000">近 8 年</option>
+          </select>
+          <select id="minute-date" style="margin-left:auto; align-self:center; display:none">
+            <option value="">加载中…</option>
+          </select>
+        </div>
+        <div id="stock-content" class="chart-area"></div>
+      </div>
+    </section>
+
+    <!-- 📊 指数看板 -->
+    <section class="panel" id="panel-indices">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📊 指数看板</div>
+        </div>
+        <div id="indices-grid" class="card-grid card-grid-4"></div>
+        <div class="subtabs" id="index-subtabs" style="margin-top: var(--space-3)">
+          <button class="subtab active" data-sub="daily">日 K</button>
+          <button class="subtab" data-sub="minute">5分钟K</button>
+          <select id="index-range" style="margin-left:auto; align-self:center">
+            <option value="30">近 30 日</option>
+            <option value="60">近 60 日</option>
+            <option value="120" selected>近 120 日</option>
+            <option value="250">近 1 年</option>
+            <option value="500">近 2 年</option>
+            <option value="1000">近 4 年</option>
+            <option value="2500">近 10 年</option>
+          </select>
+          <select id="index-minute-date" style="margin-left:auto; align-self:center; display:none">
+            <option value="">加载中…</option>
+          </select>
+        </div>
+        <div id="index-chart" class="chart-area" style="height:500px"></div>
+      </div>
+    </section>
+
+    <!-- 📐 技术指标 -->
+    <section class="panel" id="panel-indicators">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📐 技术指标计算器</div>
+          <div class="card-subtitle">基于日 K 线 · 计算后渲染</div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="ind-stock" placeholder="股票代码 (如 000001)">
+          <select id="ind-name"><option value="">加载中…</option></select>
+          <input type="number" id="ind-days" min="10" max="500" value="60" style="width:80px">
+          <button id="ind-compute" class="primary">计算</button>
+        </div>
+        <div id="ind-params-form" class="toolbar mt-2"></div>
+        <div id="ind-chart" class="chart-area" style="height:400px"></div>
+        <div id="ind-table" class="table-wrap mt-4" style="max-height:240px"></div>
+      </div>
+    </section>
+
+    <!-- 📝 SQL 查询 -->
+    <section class="panel" id="panel-sql">
+      <div class="sql-layout">
+        <aside id="sql-schema" class="sql-schema"></aside>
+        <main>
+          <div class="toolbar">
+            <span class="info">仅支持 SELECT / WITH / EXPLAIN。DuckDB 语法。点表名插入。</span>
+          </div>
+          <textarea id="sql-input" rows="6" spellcheck="false">SELECT trade_date, stock_code, close, change_pct, amount
+FROM daily_kline
+WHERE k_type=1 AND stock_code='000001'
+ORDER BY trade_date DESC LIMIT 30;</textarea>
+          <div class="toolbar">
+            <button id="sql-run" class="primary">▶ 执行</button>
+            <button id="sql-clear">清空</button>
+            <span class="info" id="sql-status"></span>
+          </div>
+          <div id="sql-error" class="err"></div>
+          <div class="table-wrap">
+            <table id="sql-table"><thead></thead><tbody></tbody></table>
+          </div>
+        </main>
+      </div>
+    </section>
+
+    <!-- 🤖 AI 分析 -->
+    <section class="panel" id="panel-ai">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🤖 AI 智能分析</div>
+          <div class="card-subtitle">由 LLM 驱动 · 自动路由最佳模型</div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="ai-stock" placeholder="股票名 或 代码 (如 平安银行 或 000001)" style="flex:1">
+          <select id="ai-type">
+            <option value="financial">📊 财报解读</option>
+            <option value="risk">⚠️ 风险扫描</option>
+            <option value="valuation">💰 估值测算</option>
+            <option value="sentiment">📰 研报观点汇总</option>
+          </select>
+          <button id="ai-run" class="primary">运行分析</button>
+          <span class="info" id="ai-status"></span>
+        </div>
+        <div id="ai-result" class="ai-result"></div>
+        <div id="ai-exports" class="toolbar mt-4" style="display:none">
+          <button id="ai-export-md">📄 导出 Markdown</button>
+          <button id="ai-export-pdf">📑 导出 PDF</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 📚 RAG 知识库 -->
+    <section class="panel" id="panel-rag">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📚 RAG 知识库</div>
+          <div class="card-subtitle">上传文档 → 切片 → 向量化 → 问答</div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="rag-stock" placeholder="关联股票代码（可空）">
+          <select id="rag-doctype">
+            <option value="pdf">PDF</option>
+            <option value="docx">Word</option>
+            <option value="md">Markdown</option>
+            <option value="announcement">公告</option>
+            <option value="report">研报</option>
+          </select>
+          <input type="text" id="rag-title" placeholder="标题（可空）">
+          <input type="file" id="rag-file" accept=".pdf,.docx,.md,.txt,.html">
+          <button id="rag-upload" class="primary">上传入库</button>
+          <span class="info" id="rag-upload-status"></span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🔍 RAG 问答</div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="rag-question" placeholder="问点什么...（Ctrl/Cmd+Enter 提问）" style="flex:1">
+          <select id="rag-topk">
+            <option value="3">Top 3</option>
+            <option value="5" selected>Top 5</option>
+            <option value="10">Top 10</option>
+          </select>
+          <button id="rag-ask" class="primary">提问</button>
+          <span class="info" id="rag-ask-status"></span>
+        </div>
+        <div id="rag-answer" class="rag-answer"></div>
+        <div id="rag-docs-list" class="table-wrap mt-4" style="max-height:240px"></div>
+      </div>
+    </section>
+
+    <!-- 💬 提示词库 -->
+    <section class="panel" id="panel-prompts">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">💬 提示词模板库</div>
+          <div class="card-subtitle">内置模板不可改 · 自定义模板可增删改</div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="prompt-name" placeholder="模板名称">
+          <input type="text" id="prompt-category" placeholder="分类 (financial/risk/custom...)">
+          <input type="text" id="prompt-vars" placeholder='变量 JSON，如 ["stock_code"]'>
+          <button id="prompt-create" class="primary">新建</button>
+        </div>
+        <textarea id="prompt-body" placeholder="模板正文（jinja2 语法：{{ stock_code }}）" rows="4"></textarea>
+        <div id="prompts-list" class="table-wrap mt-4"></div>
+      </div>
+    </section>
+
+    <!-- ⭐ 自选池 -->
+    <section class="panel" id="panel-watchlist">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">⭐ 自选池</div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="wl-new-group" placeholder="新分组名">
+          <input type="text" id="wl-new-group-desc" placeholder="描述">
+          <button id="wl-create-group" class="primary">创建分组</button>
+          <span class="info" id="wl-status"></span>
+        </div>
+        <div class="toolbar" id="wl-add-bar" style="display:none">
+          <input type="text" id="wl-add-stock" placeholder="添加股票（输入名称如 平安银行 或 代码如 000001）" style="flex:1">
+          <button id="wl-add-go" class="primary">加入分组</button>
+        </div>
+        <div class="watchlist-layout">
+          <aside id="wl-groups-list"></aside>
+          <main id="wl-items"></main>
+        </div>
+      </div>
+    </section>
+
+    <!-- 💼 持仓 -->
+    <section class="panel" id="panel-portfolio">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">💼 持仓监控</div>
+          <div class="card-subtitle">实时估值 · 浮动盈亏</div>
+        </div>
+        <div class="toolbar">
+          <button id="pf-sync-prices" class="primary">同步最新价</button>
+          <span class="info" id="pf-status"></span>
+        </div>
+        <div class="metric-row card-grid card-grid-4" id="pf-summary"></div>
+        <div id="pf-table" class="table-wrap mt-4"></div>
+      </div>
+    </section>
+
+    <!-- 🔔 预警 -->
+    <section class="panel" id="panel-alerts">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🔔 预警规则</div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="alert-name" placeholder="规则名称" style="flex:1">
+          <input type="text" id="alert-target" placeholder="目标 (股票代码 / 分组)">
+          <select id="alert-metric">
+            <option value="pe">PE</option>
+            <option value="pb">PB</option>
+            <option value="change_pct">涨跌幅%</option>
+            <option value="roe">ROE</option>
+            <option value="gross_margin">毛利率</option>
+          </select>
+          <select id="alert-op">
+            <option value=">">&gt;</option>
+            <option value="<">&lt;</option>
+            <option value=">=">&gt;=</option>
+            <option value="<=">&lt;=</option>
+            <option value="==">==</option>
+          </select>
+          <input type="number" id="alert-threshold" placeholder="阈值" step="0.1" style="width:100px">
+          <button id="alert-create" class="primary">添加规则</button>
+        </div>
+        <div class="toolbar">
+          <button id="alert-run" class="primary">▶ 立即评估</button>
+          <span class="info" id="alert-run-status"></span>
+        </div>
+        <div id="alert-rules-list" class="table-wrap mt-4"></div>
+        <h3 class="mt-4 mb-2">触发事件</h3>
+        <div id="alert-events-list" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <!-- 📔 笔记 -->
+    <section class="panel" id="panel-notes">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📔 投研笔记</div>
+          <div class="card-subtitle">笔记自动同步到向量库 · AI 可检索</div>
+        </div>
+        <div class="toolbar">
+          <input type="text" id="note-stock" placeholder="关联股票名/代码（可空）">
+          <input type="text" id="note-title" placeholder="标题" style="flex:1">
+          <button id="note-new" class="primary">新建</button>
+        </div>
+        <div class="notes-layout mt-4">
+          <aside id="notes-list"></aside>
+          <main>
+            <textarea id="note-content" placeholder="用 Markdown 写笔记...&#10;&#10;支持 **加粗**、*斜体*、`代码`、# 标题、- 列表、表格、> 引用"></textarea>
+            <div class="toolbar">
+              <button id="note-save" class="primary">保存</button>
+              <button id="note-sync">同步到向量库</button>
+              <button id="note-delete" class="danger">删除</button>
+              <span class="info" id="note-status"></span>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
