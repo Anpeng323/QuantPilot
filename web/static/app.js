@@ -664,81 +664,93 @@ function renderIndicatorChart(name, rows, params) {
     if (!state.indicatorChart) {
         state.indicatorChart = echarts.init(document.getElementById('ind-chart'), 'dark');
     }
+    if (!rows || !rows.length) return;
     const dates = rows.map(r => r.trade_date);
-    const closes = rows.map(r => r.close);
-    const series = [{ name: '收盘', type: 'line', data: closes, smooth: true, showSymbol: false,
-                      lineStyle: { color: '#9ba6b8', width: 1 } }];
+    // 蜡烛 [开,收,低,高]，A 股习惯：阳红 阴白（与个股 K 线一致）
+    const ohlc = rows.map(r => [r.open, r.close, r.low, r.high]);
+    const KSTYLE = { color: '#ef232a', color0: '#ffffff', borderColor: '#ef232a', borderColor0: '#ffffff' };
+    const series = [];
     let title = name.toUpperCase();
+    // 价格叠加类指标：用蜡烛图表达价格，指标线叠加其上
+    const addCandle = () => series.push({ name: 'K线', type: 'candlestick', data: ohlc, itemStyle: KSTYLE });
+
     if (name === 'ma') {
         const period = params.period || 5;
         title = `MA(${period})`;
+        addCandle();
         series.push({
-            name: title, type: 'line', data: rows.map(r => r[`ma${period}`]),
+            name: `MA${period}`, type: 'line', data: rows.map(r => r[`ma${period}`]),
             smooth: true, showSymbol: false,
-            lineStyle: { color: '#00d4aa', width: 2 },
+            lineStyle: { color: '#f5d000', width: 2 },
         });
     } else if (name === 'macd') {
         series.push({ name: 'DIF', type: 'line', data: rows.map(r => r.dif),
-            smooth: true, lineStyle: { color: '#00d4aa' } });
+            smooth: true, showSymbol: false, lineStyle: { color: '#f5d000', width: 1.5 } });
         series.push({ name: 'DEA', type: 'line', data: rows.map(r => r.dea),
-            smooth: true, lineStyle: { color: '#ffb800' } });
+            smooth: true, showSymbol: false, lineStyle: { color: '#14b143', width: 1.5 } });
+        series.push({ name: 'MACD', type: 'bar', data: rows.map(r => r.hist),
+            itemStyle: { color: p => (p.data >= 0 ? '#ef232a' : '#14b143') } });
     } else if (name === 'boll') {
+        title = 'BOLL';
+        addCandle();
         series.push({ name: '上轨', type: 'line', data: rows.map(r => r.boll_up),
-            smooth: true, lineStyle: { color: 'rgba(255,59,92,0.5)' } });
+            smooth: true, showSymbol: false, lineStyle: { color: '#ff3b5c', width: 1.5 } });
         series.push({ name: '中轨', type: 'line', data: rows.map(r => r.boll_mid),
-            smooth: true, lineStyle: { color: '#00d4aa' } });
+            smooth: true, showSymbol: false, lineStyle: { color: '#f5d000', width: 1.5 } });
         series.push({ name: '下轨', type: 'line', data: rows.map(r => r.boll_down),
-            smooth: true, lineStyle: { color: 'rgba(0,214,143,0.5)' } });
+            smooth: true, showSymbol: false, lineStyle: { color: '#14b143', width: 1.5 } });
     } else if (name === 'rsi') {
         const period = params.period || 14;
-        series.length = 0;  // 不要收盘
+        title = `RSI(${period})`;
         series.push({ name: `RSI(${period})`, type: 'line', data: rows.map(r => r[`rsi${period}`]),
-            smooth: true, lineStyle: { color: '#00d4aa', width: 2 },
+            smooth: true, showSymbol: false, lineStyle: { color: '#00d4ff', width: 2 },
             markLine: { silent: true, data: [
                 { yAxis: 70, lineStyle: { color: '#ff3b5c' }, label: { formatter: '超买 70' } },
-                { yAxis: 30, lineStyle: { color: '#00d68f' }, label: { formatter: '超卖 30' } },
+                { yAxis: 30, lineStyle: { color: '#14b143' }, label: { formatter: '超卖 30' } },
             ]}});
     } else if (name === 'kdj') {
-        series.length = 0;
-        series.push({ name: 'K', type: 'line', data: rows.map(r => r.kdj_k), smooth: true, showSymbol: false, lineStyle: { color: '#00d4aa', width: 2 } });
-        series.push({ name: 'D', type: 'line', data: rows.map(r => r.kdj_d), smooth: true, showSymbol: false, lineStyle: { color: '#ffb800' } });
-        series.push({ name: 'J', type: 'line', data: rows.map(r => r.kdj_j), smooth: true, showSymbol: false, lineStyle: { color: '#ff3b5c' } });
         title = 'KDJ';
+        series.push({ name: 'K', type: 'line', data: rows.map(r => r.kdj_k), smooth: true, showSymbol: false, lineStyle: { color: '#f5d000', width: 1.5 } });
+        series.push({ name: 'D', type: 'line', data: rows.map(r => r.kdj_d), smooth: true, showSymbol: false, lineStyle: { color: '#14b143', width: 1.5 } });
+        series.push({ name: 'J', type: 'line', data: rows.map(r => r.kdj_j), smooth: true, showSymbol: false, lineStyle: { color: '#ff3b5c', width: 1.5 } });
     } else if (name === 'arbr') {
-        series.length = 0;
-        series.push({ name: 'AR', type: 'line', data: rows.map(r => r.ar), smooth: true, showSymbol: false, lineStyle: { color: '#00d4aa' } });
-        series.push({ name: 'BR', type: 'line', data: rows.map(r => r.br), smooth: true, showSymbol: false, lineStyle: { color: '#ffb800' } });
         title = 'ARBR';
+        series.push({ name: 'AR', type: 'line', data: rows.map(r => r.ar), smooth: true, showSymbol: false, lineStyle: { color: '#f5d000', width: 1.5 } });
+        series.push({ name: 'BR', type: 'line', data: rows.map(r => r.br), smooth: true, showSymbol: false, lineStyle: { color: '#ff3b5c', width: 1.5 } });
     } else if (name === 'adx') {
-        series.length = 0;
-        series.push({ name: 'ADX', type: 'line', data: rows.map(r => r.adx), smooth: true, showSymbol: false, lineStyle: { color: '#00d4aa', width: 2 } });
-        series.push({ name: '+DI', type: 'line', data: rows.map(r => r.plus_di), smooth: true, showSymbol: false, lineStyle: { color: '#ffb800' } });
-        series.push({ name: '-DI', type: 'line', data: rows.map(r => r.minus_di), smooth: true, showSymbol: false, lineStyle: { color: '#ff3b5c' } });
         title = 'ADX';
+        series.push({ name: 'ADX', type: 'line', data: rows.map(r => r.adx), smooth: true, showSymbol: false, lineStyle: { color: '#f5d000', width: 2 } });
+        series.push({ name: '+DI', type: 'line', data: rows.map(r => r.plus_di), smooth: true, showSymbol: false, lineStyle: { color: '#14b143', width: 1.5 } });
+        series.push({ name: '-DI', type: 'line', data: rows.map(r => r.minus_di), smooth: true, showSymbol: false, lineStyle: { color: '#ff3b5c', width: 1.5 } });
     } else if (name === 'stochrsi') {
-        series.length = 0;
-        series.push({ name: 'StochRSI', type: 'line', data: rows.map(r => r.stochrsi), smooth: true, showSymbol: false, lineStyle: { color: '#00d4aa', width: 2 } });
-        series.push({ name: 'StochRSI %D', type: 'line', data: rows.map(r => r.stochrsi_d), smooth: true, showSymbol: false, lineStyle: { color: '#ffb800' } });
         title = 'StochRSI';
+        series.push({ name: 'StochRSI', type: 'line', data: rows.map(r => r.stochrsi), smooth: true, showSymbol: false, lineStyle: { color: '#00d4ff', width: 2 } });
+        series.push({ name: 'StochRSI %D', type: 'line', data: rows.map(r => r.stochrsi_d), smooth: true, showSymbol: false, lineStyle: { color: '#ff8a00', width: 1.5 } });
     } else {
-        // 通用：画出所有非 OHLCV 列
-        series.length = 0;
+        // 通用：画出所有非 OHLCV 列，按调色板区分颜色
         const skip = new Set(['trade_date', 'open', 'high', 'low', 'close', 'volume']);
-        Object.keys(rows[0] || {}).filter(c => !skip.has(c)).forEach(c => {
-            series.push({ name: c, type: 'line', data: rows.map(r => r[c]), smooth: true, showSymbol: false });
+        const PALETTE = ['#f5d000', '#14b143', '#ff3b5c', '#00d4ff', '#b15bff', '#ff8a00', '#00d68f', '#3b6bff', '#ff5ea8', '#a0a0a0'];
+        Object.keys(rows[0]).filter(c => !skip.has(c)).forEach((c, i) => {
+            series.push({ name: c, type: 'line', data: rows.map(r => r[c]), smooth: true, showSymbol: false,
+                lineStyle: { color: PALETTE[i % PALETTE.length], width: 1.5 } });
         });
         title = name.toUpperCase();
     }
     state.indicatorChart.setOption({
         backgroundColor: 'transparent',
-        title: { text: title, textStyle: { color: '#00d4aa', fontSize: 14 }, left: 10, top: 5 },
-        grid: { left: 50, right: 30, top: 50, bottom: 50 },
+        color: ['#f5d000', '#14b143', '#ff3b5c', '#00d4ff', '#b15bff', '#ff8a00', '#00d68f', '#3b6bff', '#ff5ea8', '#a0a0a0'],
+        title: { text: title, textStyle: { color: '#f5d000', fontSize: 14 }, left: 10, top: 5 },
+        grid: { left: 55, right: 30, top: 50, bottom: 55 },
         xAxis: { type: 'category', data: dates },
         yAxis: { type: 'value', scale: true },
-        tooltip: { trigger: 'axis' },
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
         legend: { textStyle: { color: '#9ba6b8' }, top: 25 },
+        dataZoom: [
+            { type: 'inside', xAxisIndex: 0, start: 40, end: 100 },
+            { type: 'slider', xAxisIndex: 0, start: 40, end: 100, bottom: 6, height: 18 },
+        ],
         series,
-    });
+    }, true);
 }
 
 // ============================================================
