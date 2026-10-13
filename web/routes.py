@@ -178,11 +178,20 @@ def _add_indicators_routes(router: APIRouter):
     @router.post("/indicators/{name}/compute")
     def compute(name: str, payload: dict = Body(...)):
         conn = get_conn()
-        stock_code = payload.get("stock_code")
+        stock_code = (payload.get("stock_code") or "").strip()
         params = payload.get("params", {})
         days = int(payload.get("days", 60))
         if not stock_code:
             raise HTTPException(400, "stock_code required")
+
+        # 支持直接输入股票名称：非 6 位数字则按名称解析为代码
+        if not (len(stock_code) == 6 and stock_code.isdigit()):
+            hit = conn.execute(
+                "SELECT stock_code FROM stock_basic WHERE short_name = ? LIMIT 1",
+                [stock_code]).fetchone()
+            if not hit:
+                raise HTTPException(404, f"找不到股票名称「{stock_code}」，请输入 6 位股票代码")
+            stock_code = hit[0]
 
         rows = conn.execute("""
             SELECT trade_date, open, high, low, close, volume
@@ -190,7 +199,7 @@ def _add_indicators_routes(router: APIRouter):
             ORDER BY trade_date DESC LIMIT ?
         """, [stock_code, days]).fetchall()
         if not rows:
-            raise HTTPException(404, "该股票无 K 线数据")
+            raise HTTPException(404, f"股票 {stock_code} 无 K 线数据")
 
         df = pd.DataFrame(rows, columns=["trade_date", "open", "high", "low", "close", "volume"])
         df = df.iloc[::-1].reset_index(drop=True)

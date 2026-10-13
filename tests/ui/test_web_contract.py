@@ -45,17 +45,16 @@ def app_client(tmp_path):
     original = db_mod.DB_PATH
     db_mod.DB_PATH = tmp_path / "test.duckdb"
     db_mod.init_schema()
-    # web 层在模块加载时把 DB_PATH 绑定为当时的值，这里强制同步到临时库并清掉线程连接缓存，
+    # web 层在模块加载时把 DB_PATH 绑定为当时的值，这里强制同步到临时库，
     # 确保无论导入顺序如何，应用都读到同一个临时库（与测试隔离，不依赖真实 data/quant.duckdb）。
+    # 注：web.db.get_conn() 不再缓存连接（用后即关），故无需清理线程连接缓存。
     web_db_mod.DB_PATH = db_mod.DB_PATH
-    web_db_mod._local.conn = None
     _seed(db_mod.get_conn())
     from web.app import create_app
     app = create_app()
     from fastapi.testclient import TestClient
     yield TestClient(app)
     db_mod.DB_PATH = original
-    web_db_mod._local.conn = None
 
 
 class TestWebDataContract:

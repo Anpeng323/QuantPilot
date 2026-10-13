@@ -1,12 +1,18 @@
 """
-Web 层 DuckDB 只读访问工具。
-所有查询都通过 query_dict() 走，强制只读 + 校验 + 行数截断。
+Web 层 DuckDB 访问工具。
+SQL 面板等只读查询通过 query_dict() 走，强制校验 + 行数截断。
+
+连接模式说明（重要）：
+DuckDB 要求同一进程内对同一库文件的连接配置必须一致，否则报
+"Can't open a connection to same database file with a different configuration"。
+web 层存在写操作（笔记/持仓/公告/新闻/自选池等，经 etl.db.get_conn 读写），
+故此处统一以**读写**模式打开，避免与 etl.db 混用配置。
+SQL 面板的「只读」由 safe_sql_check 校验保证，不依赖连接模式。
 """
 from __future__ import annotations
 import re
 import sys
 import time
-import threading
 from pathlib import Path
 from typing import Any
 import duckdb
@@ -14,15 +20,14 @@ import duckdb
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from etl.db import DB_PATH
 
-# ---------- 线程安全的只读连接 ----------
-_local = threading.local()
-
 
 def get_conn() -> duckdb.DuckDBPyConnection:
-    """每个线程一个只读连接（read_only 模式天然支持并发读）。"""
-    if not hasattr(_local, "conn") or _local.conn is None:
-        _local.conn = duckdb.connect(str(DB_PATH), read_only=True)
-    return _local.conn
+    """返回一个新的读写连接（配置与 etl.db.get_conn 一致，避免同进程模式冲突）。
+
+    刻意**不做缓存**：连接使用后即随局部变量释放，服务空闲时不长期持有文件锁，
+    从而保证外部工具（回归脚本 / 夜间任务）在服务空闲时仍能访问数据库。
+    """
+    return duckdb.connect(str(DB_PATH), read_only=False)
 
 
 # ---------- SQL 校验 ----------
