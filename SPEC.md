@@ -29,14 +29,14 @@
 
 **真正的缺口**（决定了后续工作的重心）：
 
-1. **数据是空的**：`stock_industry` 刚补到 5048/5640 只；`finance_core` 仅 40 只（盘后 18:30 定时任务回填中）。
-2. **财务三表已接入（长表）**：`finance_statement`（EAV 长表，覆盖三表明细常用科目）已建表并由 `data_ingest/finance_statements.py`（akshare 东方财富口径，免 token）接入；`macro_indicator`（CPI/PMI/LPR）由 `data_ingest/macro.py` 接入。两者均已挂入盘后回填定时任务（18:30）。`finance_core` 仍有 40 只（盘后回填中）。
+1. **数据持续回填中**：`stock_industry` 已 5048/5640 只；`finance_core` 已接入 **4461 只**（net_profit/roe/营收/净利/同比齐全，PE/PB/ROE 字段仍留空）；`stock_market_cap` 市值快照已每日刷新（5301 只，含总市值/流通市值/现价），DCF 可算每股内在价值。`finance_statement` 三表明细按每夜配额渐进铺满全市场（已 65 只，夜间任务持续扩充）。
+2. **财务三表已接入（长表）**：`finance_statement`（EAV 长表，覆盖三表明细常用科目：利润表含销售/管理/研发/财务费用、现金流量表含经营现金流净额等）由 `data_ingest/finance_statements.py`（akshare 东方财富口径，免 token）接入；`macro_indicator`（CPI/PMI/LPR）由 `data_ingest/macro.py` 接入。两者及市值快照均已挂入盘后回填定时任务（`etl/daily_update` 每日 17:00 跑）。
 3. **分析器缺 4 类**：`industry.py`（行业）、`macro.py`（宏观）、`comparative.py`（多公司对比）、`valuation/dcf.py`（DCF）**文件不存在**。现有 `valuation.py` 仅为"基于历史价格的简化模板"，注释明确写"需接入财报库"。
 4. **Agent 模块完全不存在**（0 文件）。
 5. **文本/产业链类缺失**：公告抓取（仅路由、无爬虫）、资讯自动抓取与去噪、研报 OCR（扫描件）、宏观数据（CPI/PMI/利率）、产业链图谱——均无。
 6. **小项**：EasyMDE 富编辑（仍是 textarea）、`USER_GUIDE.md` 文档。
 
-> 注：代码层已存在，但**分析器目前只读日K+因子，未消费 `finance_core`**（`ai/analyzers/financial.py` 实测如此）。因此"补数据"之后还须"把数据接进分析器"才有价值。
+> 注：补数据 + 接分析器均已完成——`financial.py`/`valuation.py`/`dcf.py`/`profit.py` 均已消费 `finance_core` 与 `stock_market_cap`，财报解读/估值/盈利拆解不再"空转"。
 
 ---
 
@@ -74,10 +74,10 @@
 ### 模块一 · 数据接入
 | 子项 | 状态 | 说明 |
 |---|---|---|
-| A股/指数/ETF 基础行情（K线/量/换手/市值/PE·PB·ROE） | ✅/🟡 | 行情✅；PE/PB/ROE 来自 `finance_core`（正在回填，仅 40 只） |
+| A股/指数/ETF 基础行情（K线/量/换手/市值/PE·PB·ROE） | ✅/🟡 | 行情✅；市值/PE·PB·ROE 来自 `stock_market_cap`/`finance_core`（市值已回填 5301 只；PE/PB/ROE 字段仍空待补） |
 | 多周期（日/周线） | 🟡 | 日线✅；周线需在 `etl` 加聚合 |
 | 指标计算（MA/MACD/RSI/BOLL/自定义） | ✅ | `indicators/` 已含 8 类 + registry |
-| 财报三表结构化 | 🟡 | `finance_core` 聚合表在填；三张明细表**不存在** |
+| 财报三表结构化 | ✅ | `finance_core` 聚合表 4461 只 + `finance_statement` 三表明细长表（profit/balance/cashflow，渐进铺满全市场） |
 | 公告抓取 + 关键信息提取 | ❌ | `/ingest/announcements` 路由在，但无爬虫（仅从 `doc` 表列出） |
 | 研报 PDF 解析/OCR | 🟡/❌ | RAG 能解析**文本版** PDF；**扫描件 OCR 无** |
 | 资讯（财经新闻/政策/宏观） | ❌ | `data_ingest/news.py` 仅手动录入占位 |
@@ -132,10 +132,10 @@
 
 ## 3. 数据架构现状
 
-**已有表**（DuckDB `data/quant.duckdb`）：`stock_basic`、`trade_calendar`、`daily_kline`、`minute_kline`、`index_kline`、`factors_daily`、`stock_industry`（5048）、`finance_core`（40 只，回填中）、`doc`（RAG/公告/新闻统一存，含 `doc_type`）、`note`、`watchlist*`、`alert_*`、`portfolio*`、`ai_analysis`、`prompt_template`、`memory`。
+**已有表**（DuckDB `data/quant.duckdb`）：`stock_basic`、`trade_calendar`、`daily_kline`、`minute_kline`、`index_kline`、`factors_daily`、`stock_industry`（5048）、`finance_core`（4461 只）、`stock_market_cap`（5301 只，每日刷新）、`doc`（RAG/公告/新闻统一存，含 `doc_type`）、`note`、`watchlist*`、`alert_*`、`portfolio*`、`ai_analysis`、`prompt_template`、`memory`。
 
 **缺失表**：`industry_chain`、`announcement`（可用 `doc` 表 `doc_type='announcement'` 替代）。
-**已补表**：`finance_statement`（三表明细长表，替代原计划的 balance/profit/cashflow 三张宽表）、`macro_indicator`（CPI/PMI/LPR）。
+**已补表**：`finance_statement`（三表明细长表，替代原计划的 balance/profit/cashflow 三张宽表）、`macro_indicator`（CPI/PMI/LPR）、`stock_market_cap`（全市场总市值/流通市值/现价快照）。
 
 **数据来源策略**（个人免费额度）：
 - 行情/指数/ETF/分钟：`adata` + 新浪（已落地）
@@ -152,10 +152,10 @@
 
 ### Phase A · 数据夯实 + v1.1 收尾（约 1–2 周）
 **目标**：让"已落地的代码"真正有数据可用。
-- [ ] **财务三表明细**：新建 `finance_balance/profit/cashflow`，用 adata/tushare 回填（盘后定时）。
-- [ ] **宏观数据**：`macro_indicator`（CPI/PMI/利率）via akshare，新建表 + 接入。
+- [x] **财务三表明细**：`finance_statement` 长表（profit/balance/cashflow）由 `data_ingest/finance_statements.py`（akshare 东方财富口径）接入，并挂入盘后定时（`etl/daily_update` 每夜配额渐进铺满全市场）。
+- [x] **宏观数据**：`macro_indicator`（CPI/PMI/利率）via akshare，新建表 + 接入。
 - [ ] **公告抓取**：cninfo 公开接口爬虫 → 入 `doc` 表（`doc_type='announcement'`）；launchd 每日 19:00。
-- [ ] **把 `finance_core` 接进分析器**：`financial.py`/`valuation.py` 改为消费 `finance_core`（EPS/ROE/营收/净利/同比），让财报解读与估值不再"空转"。
+- [x] **把 `finance_core` 接进分析器**：`financial.py`/`valuation.py`/`dcf.py`/`profit.py` 均消费 `finance_core`；DCF 另由 `stock_market_cap` 拿市值算每股内在价值，不再"空转"。
 - [ ] **周线聚合**：`etl` 增加周 K 生成。
 - [ ] **EasyMDE 富编辑**替换笔记 textarea + KaTeX 公式。
 - [ ] **文档**：`USER_GUIDE.md`、`API.md` 补全流程。

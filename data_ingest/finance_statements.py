@@ -33,10 +33,10 @@ FIN_MAP = {
         ("net_profit_attr_yoy","净利同比%",      ["PARENT_NETPROFIT_YOY", "NETPROFIT_YOY"]),
         ("eps",               "基本每股收益",    ["BASIC_EPS"]),
         ("roe",               "加权ROE%",        ["WEIGHTAVG_ROE", "ROE_WTD"]),
-        ("selling_expense",   "销售费用",        ["SELLING_EXPENSE"]),
+        ("selling_expense",   "销售费用",        ["SALE_EXPENSE", "SELLING_EXPENSE"]),
         ("admin_expense",     "管理费用",        ["MANAGE_EXPENSE"]),
         ("finance_expense",   "财务费用",        ["FINANCE_EXPENSE"]),
-        ("rd_expense",        "研发费用",        ["RD_EXPENSE"]),
+        ("rd_expense",        "研发费用",        ["RESEARCH_EXPENSE", "RD_EXPENSE"]),
     ],
     "balance": [
         ("total_assets",      "资产总计",        ["TOTAL_ASSETS"]),
@@ -138,6 +138,32 @@ def fetch_stock(code: str, exchange: str) -> int:
             "INSERT OR REPLACE INTO finance_statement VALUES (?,?,?,?,?,?)", rows
         )
     return len(rows)
+
+
+def run_incremental(per_night: int = 50) -> dict:
+    """渐进式全市场回填：每夜只处理最多 per_night 只尚未入库的股票，避免单夜超时。
+    配合 nightly 调度，约数十个夜晚即可铺满全市场。"""
+    conn = get_conn()
+    codes = [r for r in conn.execute(
+        "SELECT stock_code, exchange FROM stock_basic ORDER BY stock_code"
+    ).fetchall()]
+    total = 0
+    ok = 0
+    scanned = 0
+    for code, ex in codes:
+        if conn.execute(
+            "SELECT 1 FROM finance_statement WHERE stock_code=?", [code]
+        ).fetchone():
+            continue
+        scanned += 1
+        n = fetch_stock(code, ex or "SH")
+        if n:
+            total += n
+            ok += 1
+        if ok >= per_night:
+            break
+    print(f"三表明细增量接入：本夜新增 {ok} 只，共 {total} 条明细（已扫 {scanned} 只待补）")
+    return {"added": ok, "rows": total, "scanned": scanned}
 
 
 def run(limit: int = None, force: bool = False) -> dict:

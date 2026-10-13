@@ -38,6 +38,13 @@ def build_context(stock_code: str) -> tuple:
         ORDER BY report_date DESC LIMIT 1
     """, [stock_code]).fetchone()
 
+    # 总市值优先用市值快照（每日刷新、覆盖面全），回退 finance_core
+    mcap_snap = conn.execute(
+        "SELECT total_market_cap FROM stock_market_cap WHERE stock_code=?", [stock_code]
+    ).fetchone()
+    mcap = (mcap_snap[0] if mcap_snap and mcap_snap[0] is not None else None) \
+        or (fin[2] if fin else None)
+
     ctx = f"## 股票\n代码: {info['stock_code']} {info['short_name']}\n\n"
     if not price:
         ctx += "> 注：无最新行情价，无法测算。\n"
@@ -49,7 +56,7 @@ def build_context(stock_code: str) -> tuple:
         ctx += "> 注：finance_core 无该股票净利润数据，无法做 DCF（建议先接入核心财务）。\n"
         return info, ctx
 
-    net_profit, roe, mcap, rdate = fin
+    net_profit, roe, _mcap_fc, rdate = fin
     shares = (mcap / price) if mcap else None
     # 经营现金流（优先作 FCF 代理；缺失则退回净利润）
     cf = conn.execute(
