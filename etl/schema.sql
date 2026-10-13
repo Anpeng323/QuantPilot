@@ -409,3 +409,44 @@ CREATE TABLE IF NOT EXISTS industry_chain (
 );
 CREATE INDEX IF NOT EXISTS idx_chain_stock ON industry_chain(stock_code);
 CREATE INDEX IF NOT EXISTS idx_chain_sector ON industry_chain(sector_code, sector_type);
+
+-- ========== v1.4 增量：规则回测 ==========
+CREATE TABLE IF NOT EXISTS backtest_task (
+    task_id       VARCHAR PRIMARY KEY,
+    stock_code    VARCHAR(6),
+    start_date    DATE,
+    end_date      DATE,
+    signal        VARCHAR(256),
+    initial_cash  DOUBLE,
+    fill_price    VARCHAR(8),          -- open / close
+    benchmark     VARCHAR(16),
+    created_at    TIMESTAMP DEFAULT current_timestamp
+);
+CREATE INDEX IF NOT EXISTS idx_bt_stock ON backtest_task(stock_code);
+
+-- 单次结果（payload 存完整 JSON，避免宽表膨胀）
+CREATE TABLE IF NOT EXISTS backtest_result (
+    task_id       VARCHAR PRIMARY KEY,
+    total_return  DOUBLE,
+    annual_return DOUBLE,
+    max_drawdown  DOUBLE,
+    sharpe        DOUBLE,
+    win_rate      DOUBLE,
+    excess_return DOUBLE,
+    trade_count   INT,
+    data_flag     VARCHAR(64),
+    payload       VARCHAR,             -- JSON: trades[] + equity_curve[]
+    created_at    TIMESTAMP DEFAULT current_timestamp
+);
+
+-- 策略记录（Phase 3 NL 回测也写入，含代码哈希去重）
+CREATE TABLE IF NOT EXISTS strategy_record (
+    strategy_id   VARCHAR PRIMARY KEY,
+    name          VARCHAR(128),
+    source        VARCHAR(16),         -- rule / nl
+    definition    VARCHAR,             -- DSL 或生成代码
+    code_hash     VARCHAR(64),         -- 去重键
+    metrics_json  VARCHAR,             -- 最近一次绩效快照
+    created_at    TIMESTAMP DEFAULT current_timestamp
+);
+CREATE INDEX IF NOT EXISTS idx_strategy_hash ON strategy_record(code_hash);

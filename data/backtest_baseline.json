@@ -1,0 +1,15 @@
+{
+  "stock_code": "000001",
+  "start": "20230101",
+  "end": "20231231",
+  "signal": "ma5 > ma20",
+  "trade_count": 10,
+  "metrics": {
+    "total_return": -0.126084,
+    "annual_return": -0.130938,
+    "max_drawdown": -0.152279,
+    "sharpe": -1.333,
+    "win_rate": 0.2,
+    "excess_return": 0.0
+  }
+}

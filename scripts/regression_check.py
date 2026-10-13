@@ -5,9 +5,11 @@ MVP 回归检查：每次改动后运行，确认现有功能未被破坏。
   - 数据层：关键表最新日期 == 最近交易日；主键无重复；价格合法。
   - 前端层：app.js 语法 OK；关键特征存在（成交量涨红跌白 / MACD 负白 / 指数日K含成交量三栏）。
   - API 层（可选）：若提供 --api <url>，则探测关键接口是否 200。
+  - 回测层：固定场景 (000001, `ma5 > ma20`, 2023 全年) 跑引擎，断言交易非空、
+            指标齐全，并与基线快照 (data/backtest_baseline.json) 比对容忍度。
 
 用法：
-  python3 scripts/regression_check.py                 # 仅数据 + 前端静态检查
+  python3 scripts/regression_check.py                 # 仅数据 + 前端静态检查 + 回测层
   python3 scripts/regression_check.py --api http://127.0.0.1:8765   # 额外探测在线接口
 退出码：0 全部通过，1 有失败。
 """
@@ -136,6 +138,114 @@ def check_frontend():
         else:
             bad("指数日K缺少成交量栏或 grid 不足3个")
 
+# ---------------- 回测层（Phase 1 / T10） ----------------
+def check_backtest():
+    print("\n[D] 回测层")
+    import json as _json
+    from backtest.engine import BacktestRequest, run_backtest, BacktestError
+    from backtest.cost import CostConfig
+
+    SCENARIO = {
+        "stock_code": "000001",
+        "start": "20230101",
+        "end": "20231231",
+        "signal": "ma5 > ma20",
+        "initial_cash": 100000.0,
+        "fill_price": "close",
+    }
+    baseline_path = ROOT / "data" / "backtest_baseline.json"
+    REQUIRED_METRICS = ["total_return", "annual_return", "max_drawdown",
+                        "sharpe", "win_rate", "excess_return"]
+    # 指标相对基线的容忍偏差（固定历史区间应高度稳定，留小余量防浮点/数据补录）
+    TOL = {"total_return": 0.02, "annual_return": 0.02, "max_drawdown": 0.02,
+           "sharpe": 0.1, "win_rate": 0.02, "excess_return": 0.02}
+
+    # 1) 数据可用性前置：无样本数据则软跳过，不误报回归
+    #    trade_date 为 DATE 列，需用 YYYY-MM-DD；load_kline 内部已归一化，这里手动归一
+    def _d(s):
+        s = str(s)
+        return f"{s[0:4]}-{s[4:6]}-{s[6:8]}" if len(s) == 8 and s.isdigit() else s
+
+    con = duckdb.connect(str(DB), read_only=True)
+    try:
+        n = con.execute(
+            "select count(*) from daily_kline where stock_code=? and k_type=1 and adjust_type=0 "
+            "and trade_date between ? and ?",
+            [SCENARIO["stock_code"], _d(SCENARIO["start"]), _d(SCENARIO["end"])],
+        ).fetchone()[0]
+    finally:
+        con.close()
+    if not n:
+        print(f"  · 跳过：daily_kline 无 {SCENARIO['stock_code']} "
+              f"{SCENARIO['start']}~{SCENARIO['end']} 数据（数据层未覆盖，非回归）")
+        return
+
+    # 2) 执行固定场景回测
+    req = BacktestRequest(
+        stock_code=SCENARIO["stock_code"], start=SCENARIO["start"], end=SCENARIO["end"],
+        signal=SCENARIO["signal"], initial_cash=SCENARIO["initial_cash"],
+        fill_price=SCENARIO["fill_price"], cost=CostConfig(),
+    )
+    try:
+        res = run_backtest(req)
+    except BacktestError as e:
+        bad(f"回测执行失败: {e}")
+        return
+    except Exception as e:
+        bad(f"回测异常: {e}")
+        return
+
+    trades = res.get("trades") or []
+    if not trades:
+        bad("回测层：固定场景未产生交易（信号/数据异常）")
+        return
+    ok(f"固定场景({SCENARIO['stock_code']}, {SCENARIO['signal']}, 2023) 产生 {len(trades)} 笔交易")
+
+    metrics = res.get("metrics") or {}
+    missing = [k for k in REQUIRED_METRICS if k not in metrics]
+    if missing:
+        bad(f"回测层：metrics 缺字段 {missing}")
+        return
+    ok("回测层：metrics 全字段齐全")
+
+    # 3) 基线快照：首跑生成，后续比对
+    snapshot = {
+        "stock_code": SCENARIO["stock_code"], "start": SCENARIO["start"],
+        "end": SCENARIO["end"], "signal": SCENARIO["signal"],
+        "trade_count": len(trades), "metrics": metrics,
+    }
+    if not baseline_path.exists():
+        baseline_path.write_text(
+            _json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+        ok(f"回测层：已生成基线快照 -> {baseline_path.name}")
+        return
+
+    base = _json.loads(baseline_path.read_text(encoding="utf-8"))
+    if (base.get("stock_code") != SCENARIO["stock_code"]
+            or base.get("signal") != SCENARIO["signal"]
+            or base.get("start") != SCENARIO["start"]
+            or base.get("end") != SCENARIO["end"]):
+        bad("回测层：基线快照场景与当前不一致，请人工核对后重置基线")
+        return
+    if base.get("trade_count") != len(trades):
+        bad(f"回测层：交易笔数漂移 {base.get('trade_count')} -> {len(trades)}"
+            "（疑似撮合/信号逻辑被改）")
+        return
+    ok(f"回测层：交易笔数稳定 = {len(trades)}")
+
+    drift = []
+    for k, t in TOL.items():
+        bv, cv = base["metrics"].get(k), metrics.get(k)
+        if bv is None or cv is None:
+            drift.append(f"{k}=None")
+        elif abs(bv - cv) > t:
+            drift.append(f"{k}: {bv}->{cv}(>{t})")
+    if drift:
+        bad("回测层：指标相对基线漂移超阈值 -> " + ", ".join(drift))
+    else:
+        ok("回测层：关键指标与基线一致（偏差在容忍内）")
+
+
 # ---------------- API 层（可选） ----------------
 def check_api(base):
     print(f"\n[C] API 层（{base}）")
@@ -161,6 +271,7 @@ def main():
     print("=== MVP 回归检查 ===")
     check_data()
     check_frontend()
+    check_backtest()
     if "--api" in sys.argv:
         i = sys.argv.index("--api")
         if i + 1 < len(sys.argv):

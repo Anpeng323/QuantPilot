@@ -7,7 +7,7 @@ from pathlib import Path
 import json
 import os
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Query
 from pydantic import BaseModel
 
 from etl.db import get_conn
@@ -42,6 +42,85 @@ class AlertRuleIn(BaseModel):
 
 
 # ---------- 注册函数 ----------
+# ============================================================
+# 规则回测引擎
+# ============================================================
+def _add_backtest_routes(router: APIRouter):
+    from backtest.engine import BacktestRequest, run_backtest
+    from backtest.cost import CostConfig
+    from backtest.signal import validate_signal
+    from backtest.errors import BacktestError, SignalParseError
+    from backtest import repo
+
+    @router.post("/backtest/run")
+    def backtest_run(payload: dict = Body(...)):
+        stock_code = (payload.get("stock_code") or "").strip()
+        signal = (payload.get("signal") or "").strip()
+        start = (payload.get("start") or "").strip()
+        end = (payload.get("end") or "").strip()
+        if not stock_code:
+            raise HTTPException(400, "stock_code required")
+        if not signal:
+            raise HTTPException(400, "signal required")
+        if not start or not end:
+            raise HTTPException(400, "start/end required")
+        if start > end:
+            raise HTTPException(400, "回测区间无效，请检查起止日期（start 需早于 end）")
+        try:
+            initial_cash = float(payload.get("initial_cash", 100000))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "initial_cash 必须为数字")
+        if initial_cash <= 0:
+            raise HTTPException(400, "initial_cash 需大于 0")
+        fill_price = payload.get("fill_price", "close")
+        if fill_price not in ("open", "close"):
+            raise HTTPException(400, "fill_price 仅支持 open / close")
+
+        ok, err = validate_signal(signal)
+        if not ok:
+            raise HTTPException(400, err)
+
+        cost_d = payload.get("cost") or {}
+        cost = CostConfig(
+            commission=float(cost_d.get("commission", 0.00025)),
+            min_commission=float(cost_d.get("min_commission", 5.0)),
+            stamp=float(cost_d.get("stamp", 0.0005)),
+            transfer=float(cost_d.get("transfer", 0.00001)),
+            slippage=float(cost_d.get("slippage", 0.0)),
+        )
+        req = BacktestRequest(
+            stock_code=stock_code, start=start, end=end, signal=signal,
+            initial_cash=initial_cash, fill_price=fill_price, cost=cost,
+            benchmark=payload.get("benchmark"), save=bool(payload.get("save", False)),
+        )
+        try:
+            result = run_backtest(req)
+        except SignalParseError as e:
+            raise HTTPException(400, str(e))
+        except BacktestError as e:
+            raise HTTPException(400, str(e))
+
+        task_id = repo.save_task(req, result) if req.save else None
+        result["task_id"] = task_id
+        return result
+
+    @router.post("/backtest/signal/validate")
+    def backtest_validate(payload: dict = Body(...)):
+        ok, err = validate_signal((payload or {}).get("signal", ""))
+        return {"valid": ok, "error": err}
+
+    @router.get("/backtest/tasks")
+    def backtest_tasks(limit: int = Query(20, ge=1, le=100)):
+        return {"tasks": repo.list_tasks(limit)}
+
+    @router.get("/backtest/tasks/{task_id}")
+    def backtest_task_detail(task_id: str):
+        task = repo.get_task(task_id)
+        if not task:
+            raise HTTPException(404, "回测任务不存在")
+        return task
+
+
 def register_v1_1_routes(app):
     router = APIRouter(prefix="/api/v1", tags=["v1.1"])
     _add_prompts_routes(router)
@@ -50,6 +129,7 @@ def register_v1_1_routes(app):
     _add_portfolio_routes(router)
     _add_exports_routes(router)
     _add_router_routes(router)
+    _add_backtest_routes(router)
     app.include_router(router)
 
 
