@@ -54,11 +54,11 @@ FIN_MAP = {
         ("prepayment",        "预付款项",        ["PREPAYMENT", "PREPAID_EXPENSE"]),
     ],
     "cashflow": [
-        ("net_operate_cf",    "经营活动现金流净额", ["OPERATE_NET_CASH_FLOW", "NET_OPERATE_CASH_FLOW"]),
-        ("net_invest_cf",     "投资活动现金流净额", ["INVEST_NET_CASH_FLOW", "NET_INVEST_CASH_FLOW"]),
-        ("net_finance_cf",    "筹资活动现金流净额", ["FINANCE_NET_CASH_FLOW", "NET_FINANCE_CASH_FLOW"]),
-        ("cash_equiv_increase","现金净增加额",     ["CASH_EQUIVALENT_INCREASE"]),
-        ("sale_cash",         "销售收现",          ["SALE_SERVICES_CASH", "CASH_FROM_SALES"]),
+        ("net_operate_cf",    "经营活动现金流净额", ["NETCASH_OPERATE", "OPERATE_NET_CASH_FLOW", "NET_OPERATE_CASH_FLOW"]),
+        ("net_invest_cf",     "投资活动现金流净额", ["NETCASH_INVEST", "INVEST_NET_CASH_FLOW", "NET_INVEST_CASH_FLOW"]),
+        ("net_finance_cf",    "筹资活动现金流净额", ["NETCASH_FINANCE", "FINANCE_NET_CASH_FLOW", "NET_FINANCE_CASH_FLOW"]),
+        ("cash_equiv_increase","现金净增加额",     ["CASH_EQUIVALENT_INCREASE", "NETCASH_END"]),
+        ("sale_cash",         "销售收现",          ["TOTAL_OPERATE_INFLOW", "SALE_SERVICES_CASH", "CASH_FROM_SALES"]),
     ],
 }
 
@@ -116,7 +116,13 @@ def fetch_stock(code: str, exchange: str) -> int:
             continue
         if df is None or len(df) == 0:
             continue
-        df = df.tail(MAX_PERIODS)
+        # akshare 返回通常按报告期降序（最新在前）；先升序排序再取最近 N 期，
+        # 避免误取最旧的历史数据。同时按报告期去重（财报重述会出现重复期）。
+        df = df.copy()
+        df["REPORT_DATE"] = df["REPORT_DATE"].astype(str).str[:10]
+        df = (df.sort_values("REPORT_DATE", ascending=True)
+                .drop_duplicates("REPORT_DATE")
+                .tail(MAX_PERIODS))
         for rec in df.to_dict("records"):
             rd = _date(rec.get("REPORT_DATE"))
             if not rd:

@@ -1,4 +1,4 @@
-from . import financial, risk, valuation, sentiment, industry, macro, comparative, dcf
+from . import financial, risk, valuation, sentiment, industry, macro, comparative, dcf, profit
 
 DISPATCH = {
     "financial": financial.run,
@@ -13,6 +13,8 @@ DISPATCH = {
     "comparative": comparative.run,
     "dcf": dcf.run,
     "valuation_dcf": dcf.run,
+    "profit": profit.run,
+    "profit_breakdown": profit.run,
 }
 
 

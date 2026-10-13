@@ -51,26 +51,36 @@ def build_context(stock_code: str) -> tuple:
 
     net_profit, roe, mcap, rdate = fin
     shares = (mcap / price) if mcap else None
-    ctx += f"## 财务数据（报告期 {rdate}，来自 finance_core）\n"
-    ctx += f"- 净利润（年度，自由现金流代理）: {net_profit:,.0f} 元\n"
+    # 经营现金流（优先作 FCF 代理；缺失则退回净利润）
+    cf = conn.execute(
+        "SELECT value FROM finance_statement WHERE stock_code=? AND statement_type='cashflow' "
+        "AND item_key='net_operate_cf' ORDER BY report_date DESC LIMIT 1", [stock_code]
+    ).fetchone()
+    fcf0 = cf[0] if cf else net_profit
+    proxy_name = "经营现金流净额(net_operate_cf)" if cf else "净利润(代理)"
+    ctx += f"## 财务数据（报告期 {rdate}，来自 finance_core + cashflow）\n"
+    ctx += f"- 净利润: {net_profit:,.0f} 元\n"
+    if cf:
+        ctx += f"- 经营现金流净额(最新): {cf[0]:,.0f} 元\n"
+    ctx += f"- FCF 代理采用: {proxy_name} = {fcf0:,.0f} 元\n"
     ctx += f"- ROE: {roe}%\n" if roe is not None else ""
     ctx += f"- 总市值: {mcap/1e8:.1f} 亿元\n" if mcap else ""
     ctx += f"- 估算总股本（市值/股价）: {shares:,.0f} 股\n" if shares else ""
 
     # 敏感性：增速 5%/8%/11% × 折现率 8%/9%/10%
-    ctx += "\n## DCF 测算（净利润作自由现金流代理；高增 5 年 g1，永续 g=3%）\n"
+    ctx += "\n## DCF 测算（FCF 代理；高增 5 年 g1，永续 g=3%）\n"
     ctx += "| 增速\\折现 | 8% | 9% | 10% |\n|---|---|---|---|\n"
     for g1 in (0.05, 0.08, 0.11):
         row = []
         for r in (0.08, 0.09, 0.10):
             if shares:
-                _, ps = _dcf(net_profit, shares, g1=g1, r=r)
+                _, ps = _dcf(fcf0, shares, g1=g1, r=r)
                 row.append(f"{ps:.2f}")
             else:
                 row.append("-")
         ctx += f"| {g1*100:.0f}% | " + " | ".join(row) + " |\n"
     # 基准情景（企业整体内在价值始终可算；每股价值需有总股本估算）
-    pv, ps = _dcf(net_profit, shares or 1, g1=0.08, r=0.09)
+    pv, ps = _dcf(fcf0, shares or 1, g1=0.08, r=0.09)
     ctx += f"\n## 基准情景（g1=8%, r=9%）\n"
     ctx += f"- 企业内在价值（折现值）: {pv:,.0f} 元\n"
     if shares:
@@ -80,7 +90,10 @@ def build_context(stock_code: str) -> tuple:
         ctx += f"- 安全边际: {margin:+.1f}%（{'低估' if margin>0 else '高估'}）\n"
     else:
         ctx += "- 每股内在价值：无法计算（finance_core 无总市值，无法估算总股本）。\n"
-    ctx += "\n> 局限：未取经营现金流（finance_statement 暂无 cashflow 明细），以净利润作 FCF 代理会高估/低估，仅作方向性参考。\n"
+    if cf:
+        ctx += "\n> 说明：已采用经营现金流净额作 FCF 代理；若经营现金流与净利润长期背离（如重资产/金融企业），结论需谨慎。\n"
+    else:
+        ctx += "\n> 局限：未取到经营现金流，以净利润作 FCF 代理会高估/低估，仅作方向性参考。\n"
     return info, ctx
 
 

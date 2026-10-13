@@ -95,7 +95,7 @@
 | 子项 | 状态 | 说明 |
 |---|---|---|
 | 财报智能解读（亮点/隐患/异常识别） | ✅ | `financial.py` 已接入 `finance_core` 8 期 + `finance_statement` 风险科目 |
-| 盈利拆解（收入/成本/毛利归因） | ❌ | 需财务明细表支撑（三表明细已接入，待做归因逻辑） |
+| 盈利拆解（收入/成本/毛利归因） | ✅ | `profit.py`：finance_core 当期规模/YoY + 利润表同周期口径的费用拆解（销售/管理/研发/财务） |
 | 风险扫描（商誉/质押/减持/诉讼/存货） | ✅ | `risk.py` 已接入公告关键词扫描（减持/质押/诉讼/立案/减值等 20 词） |
 | 研报观点汇总（一致预期/分歧） | ❌ | 依赖研报 RAG 聚合 |
 | 估值测算（DCF/PE·PB 模板） | ✅ | `valuation.py` 动态 PE + `dcf.py` 简化 DCF（净利润作 FCF 代理） |
@@ -168,8 +168,9 @@
 - [x] `ai/analyzers/comparative.py`：多标的财务估值对比（支持 `stock_codes` 列表，已挂 `/ai/analyze`）。
 - [x] `ai/analyzers/dcf.py`：简化 DCF（净利润作 FCF 代理，含增速×折现率敏感性表）。
 - [x] **风险扫描接入公告**：`risk.py` 引入公告关键词扫描（减持/质押/诉讼/立案/减值等 20 词）。
-- [ ] **盈利拆解**：基于三表明细的收入/成本/毛利归因。
-- 验收：单标的分析覆盖"财报+风险+估值+DCF"；行业/宏观/对比分析器可调用。✅ 已达成（盈利拆解留待后续）
+- [x] **盈利拆解**：`profit.py` 收入→毛利→营业利润→归母净利的传导与费用拆解（含 YoY 同比费用率变化）。
+- 验收：单标的分析覆盖"财报+风险+估值+DCF+盈利拆解"；行业/宏观/对比分析器可调用。✅ 已达成
+- 数据层修复：`finance_statements.py` 原 `df.tail(N)` 取到了最旧历史（akshare 降序返回），已改为按报告期升序取最近 N 期并去重；现金流列名修正为 `NETCASH_OPERATE` 等，补回 cashflow 明细。
 
 ### Phase C · 文本与产业链（约 2 周）
 - [ ] **资讯自动抓取 + 去噪**：`data_ingest/news.py` 接 akshare/新闻源，去重降噪、过滤自媒体。
@@ -224,7 +225,7 @@
 | Phase | 关键交付 | 状态 |
 |---|---|---|
 | A 数据夯实 | 三表明细/宏观/公告/数据接入分析器/周线/EasyMDE/文档 | ✅ 完成（三表明细+宏观+公告已接入并挂盘后回填；`finance_core`接通分析器；周K聚合+k_type=2；笔记 EasyMDE+KaTeX；USER_GUIDE/API 文档已补全） |
-| B 分析深度 | industry/macro/comparative/DCF/风险接公告/盈利拆解 | 🟡 基本完成（✅industry/macro/comparative/dcf/风险公告扫描已落地；⏳盈利拆解待做） |
+| B 分析深度 | industry/macro/comparative/DCF/风险接公告/盈利拆解 | ✅ 全部落地（profit 已补齐；三表明细采集 bug 已修） |
 | C 文本产业链 | 资讯去噪/研报OCR/产业链/对比问答 | ❌ |
 | D 工作台 | 研究卡片/看板/规则库/复盘αβ/记忆 | ❌ |
 | E Agent | 3 Agent + 编排 + 日报 | ❌ |
