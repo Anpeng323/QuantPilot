@@ -94,14 +94,14 @@
 ### 模块三 · AI 投研分析引擎（核心）
 | 子项 | 状态 | 说明 |
 |---|---|---|
-| 财报智能解读（亮点/隐患/异常识别） | 🟡 | `financial.py` 存在但只读日K+因子，未用 `finance_core` |
-| 盈利拆解（收入/成本/毛利归因） | ❌ | 需财务明细表支撑 |
-| 风险扫描（商誉/质押/减持/诉讼/存货） | 🟡 | `risk.py` 存在；公告关键词（减持/质押）未接入 |
+| 财报智能解读（亮点/隐患/异常识别） | ✅ | `financial.py` 已接入 `finance_core` 8 期 + `finance_statement` 风险科目 |
+| 盈利拆解（收入/成本/毛利归因） | ❌ | 需财务明细表支撑（三表明细已接入，待做归因逻辑） |
+| 风险扫描（商誉/质押/减持/诉讼/存货） | ✅ | `risk.py` 已接入公告关键词扫描（减持/质押/诉讼/立案/减值等 20 词） |
 | 研报观点汇总（一致预期/分歧） | ❌ | 依赖研报 RAG 聚合 |
-| 估值测算（DCF/PE·PB 模板） | 🟡/❌ | `valuation.py` 价格模板✅；**DCF 无** |
-| 行业景气度汇总 | ❌ | 缺 `industry.py` |
-| 行业横向对比 | ❌ | 缺 `comparative.py` |
-| 宏观解读（利率/汇率/政策） | ❌ | 缺 `macro.py` + `macro_indicator` 表 |
+| 估值测算（DCF/PE·PB 模板） | ✅ | `valuation.py` 动态 PE + `dcf.py` 简化 DCF（净利润作 FCF 代理） |
+| 行业景气度汇总 | ✅ | `industry.py`：申万一级行业财务/行情/公告聚合 |
+| 行业横向对比 | ✅ | `comparative.py`：多标的财务估值对比（支持 stock_codes） |
+| 宏观解读（利率/汇率/政策） | ✅ | `macro.py`：CPI/PMI/LPR 趋势解读 |
 
 ### 模块四 · 投研工作台
 | 子项 | 状态 |
@@ -163,13 +163,13 @@
 
 ### Phase B · 分析深度（约 2–3 周）
 **目标**：补齐 4 个缺失分析器 + DCF。
-- [ ] `ai/analyzers/industry.py`：行业景气度（政策/供需/价格）。
-- [ ] `ai/analyzers/macro.py`：宏观对板块影响解读。
-- [ ] `ai/analyzers/comparative.py`：同赛道多公司指标对比表。
-- [ ] `ai/analyzers/valuation/dcf.py`：DCF 测算 + 前端表单 + `/valuation/dcf`。
-- [ ] **风险扫描接入公告**：`risk.py` 引入公告关键词（减持/定增/诉讼/质押）。
+- [x] `ai/analyzers/industry.py`：行业景气度（申万一级行业财务/行情/公告聚合）。
+- [x] `ai/analyzers/macro.py`：CPI/PMI/LPR 趋势对板块影响解读。
+- [x] `ai/analyzers/comparative.py`：多标的财务估值对比（支持 `stock_codes` 列表，已挂 `/ai/analyze`）。
+- [x] `ai/analyzers/dcf.py`：简化 DCF（净利润作 FCF 代理，含增速×折现率敏感性表）。
+- [x] **风险扫描接入公告**：`risk.py` 引入公告关键词扫描（减持/质押/诉讼/立案/减值等 20 词）。
 - [ ] **盈利拆解**：基于三表明细的收入/成本/毛利归因。
-- 验收：单标的分析覆盖"财报+风险+估值+DCF"；行业/宏观/对比分析器可调用。
+- 验收：单标的分析覆盖"财报+风险+估值+DCF"；行业/宏观/对比分析器可调用。✅ 已达成（盈利拆解留待后续）
 
 ### Phase C · 文本与产业链（约 2 周）
 - [ ] **资讯自动抓取 + 去噪**：`data_ingest/news.py` 接 akshare/新闻源，去重降噪、过滤自媒体。
@@ -224,7 +224,7 @@
 | Phase | 关键交付 | 状态 |
 |---|---|---|
 | A 数据夯实 | 三表明细/宏观/公告/数据接入分析器/周线/EasyMDE/文档 | ✅ 完成（三表明细+宏观+公告已接入并挂盘后回填；`finance_core`接通分析器；周K聚合+k_type=2；笔记 EasyMDE+KaTeX；USER_GUIDE/API 文档已补全） |
-| B 分析深度 | industry/macro/comparative/DCF/风险接公告/盈利拆解 | ❌ |
+| B 分析深度 | industry/macro/comparative/DCF/风险接公告/盈利拆解 | 🟡 基本完成（✅industry/macro/comparative/dcf/风险公告扫描已落地；⏳盈利拆解待做） |
 | C 文本产业链 | 资讯去噪/研报OCR/产业链/对比问答 | ❌ |
 | D 工作台 | 研究卡片/看板/规则库/复盘αβ/记忆 | ❌ |
 | E Agent | 3 Agent + 编排 + 日报 | ❌ |

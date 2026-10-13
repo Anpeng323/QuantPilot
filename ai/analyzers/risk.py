@@ -40,7 +40,32 @@ def build_context(stock_code: str) -> tuple:
     ctx += "| 日期 | 收盘 | 涨跌幅% | 20日波动率 | MA20偏离 |\n|---|---|---|---|---|\n"
     for r in list(reversed(recent)):
         ctx += f"| {r[0]} | {r[1]} | {r[3]} | {r[4]} | {r[5]} |\n"
-    ctx += "\n## 通用风险检查（v1）\n- 商誉/质押/减持等深度数据需接入公告库（v2 接入 cninfo 后完善）\n"
+    # 近期公告风险关键词扫描（doc 表 doc_type='announcement'）
+    KEYWORDS = ["减持", "质押", "冻结", "商誉", "诉讼", "立案", "警示", "问询",
+                "预减", "亏损", "退市", "处罚", "计提", "减值", "终止", "违约",
+                "担保", "查封", "立案调查", "监管"]
+    ann = conn.execute(
+        "SELECT title, publish_date, url FROM doc WHERE doc_type='announcement' AND stock_code=? "
+        "ORDER BY publish_date DESC LIMIT 30", [stock_code]
+    ).fetchall()
+    hits = []
+    for title, pdate, url in ann:
+        for kw in KEYWORDS:
+            if kw in (title or ""):
+                hits.append((title, pdate, kw))
+                break
+    ctx += "\n## 近期公告风险线索（关键词扫描，来自公告库）\n"
+    if hits:
+        ctx += "| 日期 | 命中关键词 | 公告标题 |\n|---|---|---|\n"
+        for title, pdate, kw in hits[:15]:
+            ctx += f"| {pdate} | {kw} | {title[:40]} |\n"
+        ctx += f"\n> 共命中 {len(hits)} 条风险相关公告（近 30 条内），建议结合原文研判。\n"
+    else:
+        ctx += "- 近 30 条公告中未命中预设风险关键词。\n"
+        if not ann:
+            ctx += "- 注：公告库暂无该股票公告，建议先运行 `data_ingest.announcement` 接入。\n"
+
+    ctx += "\n## 通用风险检查\n- 财务科目类风险（商誉/应收/存货占资产比）见 finance_statement（若已接入三表明细）。\n"
     return info, ctx
 
 

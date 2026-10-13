@@ -230,6 +230,7 @@ def ai_analyze(body: dict):
     return run_analyzer(
         stock_code=body.get("stock_code", ""),
         analysis_type=body.get("type", "financial"),
+        stock_codes=body.get("stock_codes"),
     )
 
 
