@@ -1,5 +1,5 @@
 """
-TDD: 技术指标 API（覆盖 SPEC 3.4 新增的 kdj/arbr/adx/stochrsi + 指标元数据端点）。
+TDD: 技术指标 API（覆盖 spec/00_产品规格总览.md §5 模块5 新增的 kdj/arbr/adx/stochrsi + 指标元数据端点）。
 
 约定（复用 tests/ui/test_api_routes.py 的 app_client fixture）：
 - POST /api/v1/indicators/{name}/compute  body: {stock_code, params, days}
