@@ -22,7 +22,46 @@ def load_pdf(path: str) -> List[DocSegment]:
     segs = []
     with pymupdf.open(path) as doc:
         for i, page in enumerate(doc, start=1):
-            text = page.get_text("text") or ""
+            text = _normalize(page.get_text("text") or "")
+            if text.strip():
+                segs.append(DocSegment(text=text, page=i))
+    # 有文本层则直接返回；否则走 OCR 兜底（扫描件 PDF）
+    if segs:
+        return segs
+    print("[loader] PDF 无文本层，尝试 OCR 识别（扫描件）...")
+    return ocr_pdf(path)
+
+
+def ocr_pdf(path: str, dpi: int = 200) -> List[DocSegment]:
+    """扫描件 PDF 兜底：逐页渲染为图像，用 rapidocr 识别文字。"""
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+    except Exception as e:
+        print(f"[loader] OCR 不可用（未安装 rapidocr-onnxruntime）：{e}")
+        return []
+    import numpy as np
+    import pymupdf
+    try:
+        engine = RapidOCR()
+    except Exception as e:
+        print(f"[loader] OCR 引擎初始化失败：{e}")
+        return []
+    segs = []
+    with pymupdf.open(path) as doc:
+        for i, page in enumerate(doc, start=1):
+            pix = page.get_pixmap(dpi=dpi)
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+            if pix.n == 4:
+                arr = arr[..., :3]
+            arr_bgr = arr[..., ::-1]  # RGB → BGR（OpenCV 习惯）
+            try:
+                result, _ = engine(arr_bgr)
+            except Exception as e:
+                print(f"[loader] 第 {i} 页 OCR 失败：{e}")
+                result = None
+            if not result:
+                continue
+            text = "\n".join([line[1] for line in result if line and len(line) > 1])
             text = _normalize(text)
             if text.strip():
                 segs.append(DocSegment(text=text, page=i))

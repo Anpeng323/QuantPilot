@@ -16,6 +16,8 @@ from etl.utils import get_logger, job_runner, upsert_df
 from etl.fetchers import fetch_sina_kline, fetch_sina_finance_index, fetch_sina_index_kline
 from data_ingest import market_cap as _mc
 from data_ingest import finance_statements as _fs
+from data_ingest import industry_chain as _ic
+from data_ingest import announcement as _ann
 
 log = get_logger("daily_update")
 
@@ -210,8 +212,23 @@ def update_finance_statements(conn, per_night: int = 50) -> int:
     return stats["added"]
 
 
-def run_all(datalen: int = 30, minute_datalen: int = 100, per_night: int = 50):
-    """一次性跑全部任务（含财务/市值）。"""
+# ---------- 9. 产业链/概念图谱渐进回填（每夜配额，逐步铺满板块关系） ----------
+@job_runner("daily.industry_chain", table_name="industry_chain")
+def update_industry_chain(conn, per_night: int = 30) -> int:
+    stats = _ic.run_incremental(per_night=per_night)
+    return stats["processed"]
+
+
+# ---------- 10. 全市场公告抓取（按最近交易日） ----------
+@job_runner("daily.announcement", table_name="doc")
+def update_announcement(conn, days: int = 1) -> int:
+    stats = _ann.run(days=days)
+    return stats["added"]
+
+
+def run_all(datalen: int = 30, minute_datalen: int = 100,
+            per_night: int = 50, chain_per_night: int = 30, ann_days: int = 1):
+    """一次性跑全部任务（含市值/三表/产业链/公告）。"""
     log.info("=" * 60)
     log.info("开始每日增量更新 ...")
     update_stock_basic()
@@ -222,6 +239,8 @@ def run_all(datalen: int = 30, minute_datalen: int = 100, per_night: int = 50):
     update_index_minute_kline(datalen=minute_datalen)
     update_market_cap()
     update_finance_statements(per_night=per_night)
+    update_industry_chain(per_night=chain_per_night)
+    update_announcement(days=ann_days)
     log.info("每日增量更新完成")
     log.info("=" * 60)
 
@@ -233,7 +252,11 @@ if __name__ == "__main__":
     parser.add_argument("--minute-datalen", type=int, default=100)
     parser.add_argument("--per-night", type=int, default=50,
                         help="三表明细每夜最多新增股票数（渐进铺满全市场）")
-    parser.add_argument("--only", default="", help="basic,calendar,kline,index,minute,index_minute,market_cap,finance_statements")
+    parser.add_argument("--chain-per-night", type=int, default=30,
+                        help="产业链板块每夜最多处理数（渐进铺满板块关系）")
+    parser.add_argument("--ann-days", type=int, default=1,
+                        help="公告抓取回溯交易日数")
+    parser.add_argument("--only", default="", help="basic,calendar,kline,index,minute,index_minute,market_cap,finance_statements,industry_chain,announcement")
     args = parser.parse_args()
 
     only = set(args.only.split(",")) if args.only else None
@@ -253,3 +276,7 @@ if __name__ == "__main__":
         update_market_cap()
     if only is None or "finance_statements" in only:
         update_finance_statements(per_night=args.per_night)
+    if only is None or "industry_chain" in only:
+        update_industry_chain(per_night=args.chain_per_night)
+    if only is None or "announcement" in only:
+        update_announcement(days=args.ann_days)

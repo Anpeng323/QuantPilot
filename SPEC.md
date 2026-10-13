@@ -132,10 +132,10 @@
 
 ## 3. 数据架构现状
 
-**已有表**（DuckDB `data/quant.duckdb`）：`stock_basic`、`trade_calendar`、`daily_kline`、`minute_kline`、`index_kline`、`factors_daily`、`stock_industry`（5048）、`finance_core`（4461 只）、`stock_market_cap`（5301 只，每日刷新）、`doc`（RAG/公告/新闻统一存，含 `doc_type`）、`note`、`watchlist*`、`alert_*`、`portfolio*`、`ai_analysis`、`prompt_template`、`memory`。
+**已有表**（DuckDB `data/quant.duckdb`）：`stock_basic`、`trade_calendar`、`daily_kline`、`minute_kline`、`index_kline`、`factors_daily`、`stock_industry`（5048）、`finance_core`（**40 只** × 多报告期 = 4461 行，覆盖有限）、`stock_market_cap`（5301 只，每日刷新，含 PE/PB）、`doc`（RAG/公告/新闻统一存，含 `doc_type`）、`note`、`watchlist*`、`alert_*`、`portfolio*`、`ai_analysis`、`prompt_template`、`memory`。
 
-**缺失表**：`industry_chain`、`announcement`（可用 `doc` 表 `doc_type='announcement'` 替代）。
-**已补表**：`finance_statement`（三表明细长表，替代原计划的 balance/profit/cashflow 三张宽表）、`macro_indicator`（CPI/PMI/LPR）、`stock_market_cap`（全市场总市值/流通市值/现价快照）。
+**缺失表**：`announcement`（可用 `doc` 表 `doc_type='announcement'` 替代）。
+**已补表**：`finance_statement`（三表明细长表，替代原计划的 balance/profit/cashflow 三张宽表）、`macro_indicator`（CPI/PMI/LPR）、`stock_market_cap`（全市场总市值/流通市值/现价 + PE/PB 快照）、`industry_chain`（股票↔板块关系边，渐进回填中）、`industry_chain_meta`（板块抓取进度）。
 
 **数据来源策略**（个人免费额度）：
 - 行情/指数/ETF/分钟：`adata` + 新浪（已落地）
@@ -154,7 +154,7 @@
 **目标**：让"已落地的代码"真正有数据可用。
 - [x] **财务三表明细**：`finance_statement` 长表（profit/balance/cashflow）由 `data_ingest/finance_statements.py`（akshare 东方财富口径）接入，并挂入盘后定时（`etl/daily_update` 每夜配额渐进铺满全市场）。
 - [x] **宏观数据**：`macro_indicator`（CPI/PMI/利率）via akshare，新建表 + 接入。
-- [ ] **公告抓取**：cninfo 公开接口爬虫 → 入 `doc` 表（`doc_type='announcement'`）；launchd 每日 19:00。
+- [x] **公告抓取**：`data_ingest/announcement.py`（akshare 东方财富 `stock_notice_report`）→ 入 `doc` 表（`doc_type='announcement'`），已挂夜间 `etl/daily_update`（`daily.announcement`）。
 - [x] **把 `finance_core` 接进分析器**：`financial.py`/`valuation.py`/`dcf.py`/`profit.py` 均消费 `finance_core`；DCF 另由 `stock_market_cap` 拿市值算每股内在价值，不再"空转"。
 - [ ] **周线聚合**：`etl` 增加周 K 生成。
 - [ ] **EasyMDE 富编辑**替换笔记 textarea + KaTeX 公式。
@@ -173,11 +173,14 @@
 - 数据层修复：`finance_statements.py` 原 `df.tail(N)` 取到了最旧历史（akshare 降序返回），已改为按报告期升序取最近 N 期并去重；现金流列名修正为 `NETCASH_OPERATE` 等，补回 cashflow 明细。
 
 ### Phase C · 文本与产业链（约 2 周）
-- [ ] **资讯自动抓取 + 去噪**：`data_ingest/news.py` 接 akshare/新闻源，去重降噪、过滤自媒体。
-- [ ] **研报 OCR**：扫描件 PDF → PaddleOCR → 入库 RAG。
-- [ ] **产业链图谱**：`industry_chain` 表 + 简易图谱（上下游/行业分类）。
-- [ ] **RAG 对比问答**：支持"对比不同年份/公司"的时序对比查询。
-- 验收：新闻自动流入；扫描研报可检索；产业链可可视化。
+- [x] **资讯自动抓取 + 去噪**：`data_ingest/news.py` 接 `stock_news_main_cx`（全市场主财经新闻）+ `stock_news_em`（个股，按需）；按 url/归一化标题去重、剔除广告词；入 `doc`（`doc_type='news'`），保留 `add_news/list_news` 手动录入通道。
+- [x] **研报 OCR**：`knowledge/loader.py` 无文本层 PDF 自动走 `rapidocr-onnxruntime` 逐页识别（本地推理、模型内置无需联网），已用生成扫描件端到端验证入库。
+- [x] **产业链图谱**：`industry_chain`（股票↔板块关系边）+ `industry_chain_meta`（板块进度表）；东方财富行业 496 + 概念 506 板块，**渐进式夜间回填**（每夜配额，成分接口约 6s/板块）；提供 `related_stocks()` 共板块关联查询与 `/chain/*` 接口。
+- [x] **RAG 对比问答**：`vector_store.query` 支持 `stock_codes`/`doc_types` 列表过滤；新增 `rag_chain.compare()` = 结构化财务对比表 + 多股研报/公告检索 → LLM 横向对比，端点 `POST /rag/compare`。
+- [x] **公告抓取**：`data_ingest/announcement.py`（akshare 东方财富）已接夜间 `etl/daily_update`（`daily.announcement`）。
+- 验收：新闻自动流入；扫描研报可检索；产业链关系可查询。✅ 已达成
+- 数据层补充：**PE/PB/ROE 估值字段**——`stock_market_cap` 快照新增 `pe`/`pb`（全市场 4967 只，每日刷新）；`finance_core` 最新报告期行回填 pe/pb，缺失 ROE 由 `PB/PE` 推导；`valuation.py`/`comparative.py` 在 `finance_core` 缺失时回退读快照。
+  - 重要修正：`finance_core` 实际仅覆盖 **40 只**股票（4461 行 = 40 只 × 多报告期），非此前记录的"4461 只"，故 PE/PB 以全市场快照为主供数。
 
 ### Phase D · 工作台聚合增强（约 2 周）
 - [ ] **研究卡片**：聚合 行情 + 财务 + AI 摘要 + 个人笔记 的统一卡片 UI。

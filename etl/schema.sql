@@ -388,3 +388,24 @@ CREATE TABLE IF NOT EXISTS macro_indicator (
     PRIMARY KEY (indicator, trade_date)
 );
 CREATE INDEX IF NOT EXISTS idx_macro_ind ON macro_indicator(indicator);
+
+-- ========== v1.2 增量：产业链/概念图谱 ==========
+-- 板块登记（渐进回填的进度表）
+CREATE TABLE IF NOT EXISTS industry_chain_meta (
+    sector_code  VARCHAR,
+    sector_type  VARCHAR,      -- industry / concept
+    sector_name  VARCHAR,
+    done         BOOLEAN DEFAULT false,
+    updated_at   TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (sector_code, sector_type)
+);
+-- 股票↔板块 关系边（共行业/共概念 = 相关）
+CREATE TABLE IF NOT EXISTS industry_chain (
+    stock_code   VARCHAR,
+    sector_type  VARCHAR,
+    sector_code  VARCHAR,
+    sector_name  VARCHAR,
+    PRIMARY KEY (stock_code, sector_type, sector_code)
+);
+CREATE INDEX IF NOT EXISTS idx_chain_stock ON industry_chain(stock_code);
+CREATE INDEX IF NOT EXISTS idx_chain_sector ON industry_chain(sector_code, sector_type);

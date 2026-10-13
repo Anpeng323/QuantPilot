@@ -31,18 +31,29 @@ def build_context(stock_codes: list) -> tuple:
             ORDER BY report_date DESC LIMIT 1
         """, [code]).fetchone()
         price = _latest_price(code)
+        # finance_core 覆盖有限 → PE/PB/市值回退到全市场估值快照
+        snap = conn.execute(
+            "SELECT price, pe, pb, total_market_cap FROM stock_market_cap WHERE stock_code=?",
+            [code]).fetchone()
+        pe = fin[5] if fin else None
+        pb = fin[6] if fin else None
+        mcap = fin[7] if fin else None
+        if snap:
+            pe = pe if pe is not None else snap[1]
+            pb = pb if pb is not None else snap[2]
+            mcap = mcap if mcap is not None else snap[3]
         rows.append({
             "code": code,
             "name": info["short_name"],
-            "price": price[0] if price else None,
+            "price": price[0] if price else (snap[0] if snap else None),
             "eps": fin[0] if fin else None,
             "roe": fin[1] if fin else None,
             "gm": fin[2] if fin else None,
             "yoy_rev": fin[3] if fin else None,
             "yoy_pft": fin[4] if fin else None,
-            "pe": fin[5] if fin else None,
-            "pb": fin[6] if fin else None,
-            "mcap": fin[7] if fin else None,
+            "pe": pe,
+            "pb": pb,
+            "mcap": mcap,
         })
     if not rows:
         return rows, "（无有效股票数据）"
@@ -62,7 +73,7 @@ def build_context(stock_codes: list) -> tuple:
     )
     ctx = "## 对比标的清单\n" + ", ".join(r["code"] for r in rows) + "\n\n"
     ctx += "## 财务指标对比表\n" + table + "\n\n"
-    ctx += "> 注：部分字段可能为 -（finance_core 未覆盖该股票，盘后回填将补齐）。\n"
+    ctx += "> 注：部分字段可能为 -。PE/PB/市值优先取 finance_core，缺失时回退全市场估值快照 stock_market_cap。\n"
     return rows, ctx
 
 

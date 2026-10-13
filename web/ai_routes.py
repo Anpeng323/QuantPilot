@@ -29,6 +29,7 @@ from notes import note as note_mod
 from notes import sync as note_sync
 from portfolio import position as pf_pos, trade as pf_tr, review as pf_rv
 from data_ingest import announcement as di_ann, news as di_news, finance as di_fin
+from data_ingest import industry_chain as di_chain
 
 router = APIRouter(prefix="/api/v1", tags=["ai-invest"])
 
@@ -220,7 +221,19 @@ def rag_query(body: dict):
     return rag_chain.query(
         question=body.get("question", ""),
         stock_code=body.get("stock_code") or None,
+        stock_codes=body.get("stock_codes"),
+        doc_types=body.get("doc_types"),
         top_k=body.get("top_k", 5),
+    )
+
+
+@router.post("/rag/compare")
+def rag_compare(body: dict):
+    """多股票 RAG 对比问答：结构化财务对比 + 研报/公告检索 → 横向对比。"""
+    return rag_chain.compare(
+        stock_codes=body.get("stock_codes", []),
+        question=body.get("question", ""),
+        top_k=body.get("top_k", 4),
     )
 
 
@@ -363,3 +376,32 @@ def ingest_announcements_crawl(body: dict = None):
     days = int(body.get("days", 1))
     date_str = body.get("date")
     return di_ann.run(days=days, date_str=date_str)
+
+
+# =============== 9. 产业链 / 概念图谱 ===============
+@router.get("/chain/related")
+def chain_related(stock_code: str = "", top_n: int = 10):
+    """与某股票共享板块最多的相关股票（共行业/共概念 = 相关）。"""
+    if not stock_code:
+        return {"error": "stock_code 必填"}
+    return {
+        "stock_code": stock_code,
+        "related": di_chain.related_stocks(stock_code, top_n=top_n),
+    }
+
+
+@router.get("/chain/sector")
+def chain_sector(sector: str = "", limit: int = 200):
+    """某板块（名称或代码）的成员股票。"""
+    if not sector:
+        return {"error": "sector 必填"}
+    return {"sector": sector, "members": di_chain.sector_members(sector, limit=limit)}
+
+
+@router.get("/chain/stats")
+def chain_stats():
+    conn = get_conn()
+    edges = conn.execute("SELECT COUNT(*) FROM industry_chain").fetchone()[0]
+    boards = conn.execute("SELECT COUNT(*) FROM industry_chain_meta").fetchone()[0]
+    done = conn.execute("SELECT COUNT(*) FROM industry_chain_meta WHERE done=true").fetchone()[0]
+    return {"sector_edges": edges, "sector_boards": boards, "boards_done": done}

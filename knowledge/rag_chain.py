@@ -87,11 +87,13 @@ def delete_doc_full(doc_id: str) -> Dict[str, Any]:
 
 
 def query(question: str, stock_code: Optional[str] = None, top_k: int = 5,
+          stock_codes: Optional[List[str]] = None,
+          doc_types: Optional[List[str]] = None,
           model: str = None) -> Dict[str, Any]:
     """
     RAG 问答。
     1. Embedding 问题
-    2. 向量库召回
+    2. 向量库召回（支持单股票/多股票/多文档类型过滤）
     4. 调 LLM 回答
     """
     if not question.strip():
@@ -102,10 +104,11 @@ def query(question: str, stock_code: Optional[str] = None, top_k: int = 5,
     except Exception as e:
         return {"error": f"问题向量化失败: {e}"}
 
-    retrieved = vec_query(q_emb, top_k=top_k, stock_code=stock_code)
+    retrieved = vec_query(q_emb, top_k=top_k, stock_code=stock_code,
+                          stock_codes=stock_codes, doc_types=doc_types)
     if not retrieved:
         return {
-            "answer": "**知识库为空**。请先在 RAG 页面上传 PDF/Word/Markdown 文档。",
+            "answer": "**知识库为空或未检索到相关内容**。请先上传 PDF/Word/Markdown 文档，或放宽检索条件。",
             "citations": [],
             "model": "none",
             "duration_ms": 0,
@@ -139,4 +142,84 @@ def query(question: str, stock_code: Optional[str] = None, top_k: int = 5,
         "model": resp["model"],
         "tokens": resp["total_tokens"],
         "duration_ms": dur,
+    }
+
+
+_PROMPT_RAG_COMPARE = """你是一名资深证券分析师。以下是用户就多只股票提出的对比问题。
+
+## 结构化财务对比
+{{table}}
+
+## 来自研报/公告/笔记的检索资料
+{{context}}
+
+## 用户问题
+{{question}}
+
+要求：
+- 紧扣问题，结合财务数据与检索资料做横向对比；
+- 给出明确结论与关键差异点；
+- 引用资料时标注 [来源 doc_id=xxx]；
+- 若数据不足，明确指出缺失项，不要编造。
+"""
+
+
+def compare(stock_codes: List[str], question: str, top_k: int = 4,
+            model: str = None) -> Dict[str, Any]:
+    """
+    多股票 RAG 对比问答：结构化财务对比表 + 研报/公告/笔记检索资料 → LLM 横向对比。
+    """
+    if not question.strip():
+        return {"error": "问题为空"}
+    if not stock_codes:
+        return {"error": "请至少提供 1 只股票（stock_codes）"}
+
+    # 1. 结构化财务对比表（复用 comparative 分析器）
+    try:
+        from ai.analyzers.comparative import build_context as cmp_ctx
+        _rows, table_ctx = cmp_ctx(stock_codes)
+    except Exception as e:
+        table_ctx = f"（结构化对比生成失败：{e}）"
+
+    # 2. RAG 检索（仅该组股票的 研报/公告/笔记）
+    try:
+        q_emb = embed_query(question)
+    except Exception as e:
+        return {"error": f"问题向量化失败: {e}"}
+    retrieved = vec_query(
+        q_emb, top_k=max(3, top_k * len(stock_codes)),
+        stock_codes=stock_codes,
+        doc_types=["report", "announcement", "research", "note"],
+    )
+    ctx_parts = []
+    for i, r in enumerate(retrieved, 1):
+        ctx_parts.append(
+            f"### [{i}] doc_id={r['doc_id']} stock={r['stock_code']} "
+            f"page {r['page']} (score={r['score']})\n{r['text'][:1200]}"
+        )
+    ctx = "\n\n".join(ctx_parts) if ctx_parts else "（知识库无该组股票相关文档）"
+
+    from jinja2 import Template
+    prompt = Template(_PROMPT_RAG_COMPARE).render(
+        table=table_ctx, context=ctx, question=question)
+
+    t0 = time.time()
+    resp = llm.chat([{"role": "user", "content": prompt}],
+                    model=model, temperature=0.3, max_tokens=2200)
+    dur = int((time.time() - t0) * 1000)
+
+    return {
+        "answer": resp["text"],
+        "citations": [{
+            "chunk_id": r["chunk_id"],
+            "doc_id": r["doc_id"],
+            "stock_code": r["stock_code"],
+            "page": r["page"],
+            "score": r["score"],
+            "text_preview": r["text"][:200],
+        } for r in retrieved],
+        "model": resp["model"],
+        "tokens": resp["total_tokens"],
+        "duration_ms": dur,
+        "stock_codes": stock_codes,
     }

@@ -37,26 +37,40 @@ def build_context(stock_code: str) -> tuple:
         FROM finance_core WHERE stock_code=?
         ORDER BY report_date DESC LIMIT 1
     """, [stock_code]).fetchone()
+    # finance_core 仅覆盖部分个股（PE/PB 常缺）→ 回退到全市场估值快照 stock_market_cap
+    snap = conn.execute("""
+        SELECT price, pe, pb, total_market_cap FROM stock_market_cap WHERE stock_code=?
+    """, [stock_code]).fetchone()
 
     ctx  = f"## 股票\n代码: {info['stock_code']} {info['short_name']}\n\n"
     if cur:
         price = cur[0]
         ctx += f"## 当前价（最新收盘）: {price:.2f} 元\n"
+        # 以快照补齐 finance_core 缺失的 PE/PB/市值
+        pe_db = fin[3] if fin else None
+        pb_db = fin[4] if fin else None
+        mcap = fin[5] if fin else None
+        if snap:
+            pe_db = pe_db if pe_db is not None else snap[1]
+            pb_db = pb_db if pb_db is not None else snap[2]
+            mcap = mcap if mcap is not None else snap[3]
         if fin:
-            eps, roe, gm, pe_db, pb_db, mcap, rdate = fin
+            eps, roe, gm, _pe, _pb, _m, rdate = fin
             ctx += f"## 财务数据（报告期 {rdate}，来自 finance_core）\n"
             ctx += f"- EPS: {eps}\n- ROE: {roe}%\n- 毛利率: {gm}%\n"
             if eps:
                 ctx += f"- 动态 PE（现价/EPS）: {price/eps:.1f}\n"
-            if mcap:
-                ctx += f"- 总市值（库内）: {mcap/1e8:.1f} 亿元\n"
-            if pe_db:
-                ctx += f"- PE（库内记录）: {pe_db}\n"
-            if pb_db:
-                ctx += f"- PB（库内记录）: {pb_db}\n"
         else:
-            ctx += "\n> 注：finance_core 暂无该股票财务数据，无法计算 PE/PB，"
-            ctx += "建议先运行 data_ingest.finance_adata 接入核心财务。\n"
+            ctx += "\n> 注：finance_core 暂无该股票财务数据（核心财务覆盖有限），"
+            ctx += "以下 PE/PB/市值取自全市场估值快照 stock_market_cap。\n"
+        if mcap:
+            ctx += f"- 总市值: {mcap/1e8:.1f} 亿元\n"
+        if pe_db:
+            ctx += f"- PE（{"库内" if fin and fin[3] is not None else "快照"}）: {pe_db}\n"
+        if pb_db:
+            ctx += f"- PB（{"库内" if fin and fin[4] is not None else "快照"}）: {pb_db}\n"
+        if pe_db is None and pb_db is None:
+            ctx += "（暂无 PE/PB 数据）\n"
     if stats and stats[0]:
         ctx += f"\n## 近 1 年价格统计\n- 最低: {stats[0]:.2f}\n- 最高: {stats[1]:.2f}\n- 平均: {stats[2]:.2f}\n- 30日交易天数: {stats[3]}\n"
     ctx += "\n## 最近 30 个交易日收盘价\n"

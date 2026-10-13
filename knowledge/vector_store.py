@@ -68,11 +68,26 @@ def delete_doc(doc_id: str) -> int:
 
 
 def query(query_embedding: List[float], top_k: int = 10,
-          stock_code: str | None = None) -> List[Dict[str, Any]]:
+          stock_code: str | None = None,
+          stock_codes: List[str] | None = None,
+          doc_types: List[str] | None = None) -> List[Dict[str, Any]]:
+    """向量召回。
+    stock_code: 单只过滤（兼容旧调用）
+    stock_codes: 多只过滤（$in）
+    doc_types: 仅指定文档类型（$in，如 ['report','announcement']）
+    """
     col = get_collection()
+    conditions = []
+    codes = [stock_code] if stock_code else (stock_codes or [])
+    if codes:
+        conditions.append({"stock_code": {"$in": [str(c) for c in codes]}})
+    if doc_types:
+        conditions.append({"doc_type": {"$in": [str(d) for d in doc_types]}})
     where = None
-    if stock_code:
-        where = {"stock_code": stock_code}
+    if len(conditions) == 1:
+        where = conditions[0]
+    elif len(conditions) > 1:
+        where = {"$and": conditions}
     res = col.query(query_embeddings=[query_embedding], n_results=top_k, where=where)
     results = []
     for i, chunk_id in enumerate(res["ids"][0]):
