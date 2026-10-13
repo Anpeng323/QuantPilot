@@ -1,205 +1,183 @@
-# Quant Workbench · API 参考（v1.1）
+# Quant Workbench · API 参考
 
-> Base URL：`http://localhost:8765/api/v1`
+> Base URL（默认）：`http://localhost:8765`
+> 股票行情走 `/api/stock/*`；其余业务走 `/api/v1/*`。
+> 最后更新：2026-10-13
 
 ---
 
-## LLM
+## 行情 / 个股
 
-### GET `/llm/info`
-当前 LLM provider 信息 + embedding 状态。
+### GET `/api/stock/info`
+```bash
+curl "http://localhost:8765/api/stock/info?q=000001"
+```
 
-```json
-{
-    "llm": {
-        "provider": "minimax",
-        "live": true,
-        "minimax_model": "MiniMax-M3"
-    },
-    "embedding": { "model": "BAAI/bge-small-zh-v1.5" }
-}
+### GET `/api/stock/search`
+```bash
+curl "http://localhost:8765/api/stock/search?q=平安&limit=10"
+```
+
+### GET `/api/stock/kline`
+日 K（k_type=1）。
+```bash
+curl "http://localhost:8765/api/stock/kline?code=000001&days=120"
+# → { rows: [ {trade_date, open, high, low, close, pre_close, change, change_pct, volume, amount}, ... ] }
+```
+
+### GET `/api/stock/weekly`
+周 K（由日 K 聚合，k_type=2）。
+```bash
+curl "http://localhost:8765/api/stock/weekly?code=000001&weeks=120"
+```
+
+### GET `/api/stock/minute`
+5 分钟 K（默认最新交易日）；`date` 可选指定交易日。
+```bash
+curl "http://localhost:8765/api/stock/minute?code=000001&days=1"
+```
+
+### GET `/api/stock/minute/dates`
+返回有 5 分钟数据的交易日列表。
+```bash
+curl "http://localhost:8765/api/stock/minute/dates?code=000001&limit=60"
+```
+
+### GET `/api/stock/{code}` / `/daily` / `/minute` / `/factors`
+单标的详情、日 K、分钟、因子（server.py 暴露）。
+
+---
+
+## RAG 知识库  (`/api/v1`)
+
+### GET `/rag/stats`
+库内文档/分块统计。
+
+### POST `/rag/upload`
+上传文档（multipart）。
+```bash
+curl -F "file=@report.pdf" -F "stock_code=000001" -F "doc_type=report" \
+     -F "title=2026Q3 研报" http://localhost:8765/api/v1/rag/upload
+# → { doc_id, chunk_count }
+```
+
+### GET `/rag/docs`
+列出文档（`stock_code`、`limit` 可选）。
+
+### DELETE `/rag/docs/{doc_id}`
+
+### POST `/rag/query`
+```bash
+curl -X POST http://localhost:8765/api/v1/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "该公司 2025 年毛利率变化？", "top_k": 5}'
+# → { answer, citations: [...] }  # citations 含原文出处（引用溯源）
 ```
 
 ---
 
-## 技术指标
+## 笔记  (`/api/v1`)
+
+### GET `/notes` / POST `/notes`
+```bash
+curl -X POST http://localhost:8765/api/v1/notes \
+  -H "Content-Type: application/json" \
+  -d '{"stock_code":"000001","title":"我的笔记","content_md":"# 标题\n正文 $E=mc^2$"}'
+```
+
+### GET/PUT/DELETE `/notes/{note_id}`
+
+### POST `/notes/{note_id}/sync-vector`
+把笔记同步进向量库，供 RAG 检索。
+
+---
+
+## 自选池  (`/api/v1`)
+
+### GET/POST `/watchlist/groups`
+列出 / 新建分组（如 观察池 / 持仓池 / 行业池）。
+
+### DELETE `/watchlist/groups/{group_name}`
+
+### GET `/watchlist/{group_name}`
+分组内股票列表。
+
+### POST/DELETE `/watchlist/{group_name}/{stock_code}`
+加入 / 移除。
+
+### GET `/watchlist/{group_name}/alerts`
+该分组内股票的预警事件。
+
+---
+
+## AI 投研分析  (`/api/v1`)
+
+### POST `/ai/analyze`
+```bash
+curl -X POST http://localhost:8765/api/v1/ai/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"stock_code":"000001","analysis_type":"financial_summary","save":true}'
+# analysis_type ∈ financial_summary | risk_scan | valuation | sentiment
+# → { analysis_id, response, model, tokens, cost_cny, ... }
+```
+> 财报解读/估值会消费 `finance_core` 与 `finance_statement`；缺数据时自动降级提示先接入。
+
+### GET `/ai/history`
+历史分析记录。
+
+### GET `/ai/result/{analysis_id}`
+单条分析详情。
+
+---
+
+## 记忆  (`/api/v1`)
+
+### GET/POST `/memory`
+读取 / 更新用户投资偏好（供分析时贴合风格）。
+
+---
+
+## 数据接入  (`/api/v1`)
+
+### GET/POST `/ingest/news`
+列出 / 新增新闻（手动录入占位，自动抓取规划中）。
+
+### GET `/ingest/announcements`
+列出已入库公告。
+
+### POST `/ingest/announcements`
+触发公告抓取（akshare 东方财富）。
+```bash
+curl -X POST http://localhost:8765/api/v1/ingest/announcements \
+  -H "Content-Type: application/json" -d '{"days":1}'
+# → { dates, added }
+```
+
+---
+
+## 技术指标  (`/api/v1`)
 
 ### GET `/indicators`
-列出所有可用指标。
-
-```bash
-curl http://localhost:8765/api/v1/indicators
-# ["ma", "macd", "boll", "rsi"]
-```
+列出 8 个指标：`ma / macd / boll / rsi / kdj / adx / arbr / stochrsi`。
 
 ### POST `/indicators/{name}/compute`
-计算指标。
-
 ```bash
 curl -X POST http://localhost:8765/api/v1/indicators/ma/compute \
   -H "Content-Type: application/json" \
-  -d '{
-        "stock_code": "000001",
-        "params": {"period": 5},
-        "days": 60
-      }'
-```
-
-返回：
-```json
-{
-    "name": "ma",
-    "params": {"period": 5},
-    "rows": [
-        {"trade_date": "2024-01-01T00:00:00", "open": 10.0, "high": 10.2, ...},
-        ...
-    ]
-}
+  -d '{"stock_code":"000001","params":{"period":5},"days":60}'
 ```
 
 ---
 
-## 提示词模板
+## 提示词模板 / 预警 / 持仓 / 导出 / 模型路由
 
-### GET `/prompts`
-列出所有模板（自动 seed 内置模板）。
+（详见既有章节；路由前缀均为 `/api/v1`）
 
-### POST `/prompts`
-新建用户模板。
-
-### GET `/prompts/{tid}`
-查询单个模板。
-
-### PUT `/prompts/{tid}`
-更新用户模板（内置模板不可改）。
-
-### DELETE `/prompts/{tid}`
-删除用户模板（内置模板不可删）。
-
----
-
-## 预警规则
-
-### GET `/alerts/rules`
-列出所有规则。
-
-### POST `/alerts/rules`
-创建规则。
-
-```bash
-curl -X POST http://localhost:8765/api/v1/alerts/rules \
-  -H "Content-Type: application/json" \
-  -d '{
-        "name": "PE>50",
-        "target_type": "stock",
-        "target_value": "000001",
-        "metric": "pe",
-        "operator": ">",
-        "threshold": 50.0
-      }'
-```
-
-### DELETE `/alerts/rules/{rid}`
-删除规则。
-
-### POST `/alerts/run`
-立即评估所有 active 规则，返回触发的 AlertEvent 列表。
-
-### GET `/alerts/events`
-历史触发事件列表。
-
----
-
-## 持仓
-
-### GET `/portfolio/snapshot`
-获取持仓快照（每条 + 汇总）。
-
-```json
-{
-    "rows": [
-        {
-            "position_id": "p1",
-            "stock_code": "000001",
-            "short_name": "平安银行",
-            "cost_price": 10.5,
-            "quantity": 100,
-            "cost_total": 1050.0,
-            "current_price": 12.0,
-            "market_value": 1200.0,
-            "floating_pnl": 150.0,
-            "return_pct": 0.143,
-            "open_date": "2024-01-01",
-            "status": "open"
-        }
-    ],
-    "total": {
-        "position_count": 1,
-        "valued_count": 1,
-        "cost_total": 1050.0,
-        "market_value": 1200.0,
-        "floating_pnl": 150.0,
-        "return_pct": 0.143
-    }
-}
-```
-
-### POST `/portfolio/sync-prices`
-同步最新价（调用 provider，默认 adata）。
-
-```bash
-curl -X POST http://localhost:8765/api/v1/portfolio/sync-prices \
-  -H "Content-Type: application/json" \
-  -d '["000001", "000002"]'
-```
-
----
-
-## 导出
-
-### GET `/exports/analysis/{aid}/md`
-获取 Markdown 文本。
-
-```json
-{"content": "# AI 分析报告 - 000001...", "analysis_id": "a1"}
-```
-
-### GET `/exports/analysis/{aid}/pdf`
-生成 PDF 文件（写入 `data/exports/`）。
-
-```json
-{"path": "/.../analysis_a1.pdf", "analysis_id": "a1"}
-```
-
-### GET `/exports/watchlist/{group}/excel`
-生成 Excel 文件。
-
-```json
-{"path": "/.../watchlist_持仓池.xlsx", "group": "持仓池"}
-```
-
----
-
-## 模型路由
-
-### GET `/router/models`
-查看当前路由配置。
-
-```json
-{
-    "config": {
-        "financial_summary": "MiniMax-M3",
-        "valuation": "MiniMax-M3",
-        "sentiment": "MiniMax-M3.1-Flash-Preview",
-        "rag_qa": "qwen-long",
-        ...
-    },
-    "current": { ... }
-}
-```
-
-### POST `/router/config`
-覆盖路由（部分或全部）。
+- **提示词**：`/prompts`（GET/POST）、`/prompts/{tid}`（GET/PUT/DELETE）
+- **预警**：`/alerts/rules`（GET/POST/DELETE）、`/alerts/run`（POST）、`/alerts/events`（GET）
+- **持仓**：`/portfolio/positions`、`/portfolio/positions/{id}/close`、`/portfolio/trades`、`/portfolio/review`、`/portfolio/reviews`
+- **导出**：`/exports/analysis/{aid}/md`、`/exports/analysis/{aid}/pdf`、`/exports/watchlist/{group}/excel`
+- **模型路由**：`/router/models`（GET）、`/router/config`（POST）
 
 ---
 
@@ -207,20 +185,19 @@ curl -X POST http://localhost:8765/api/v1/portfolio/sync-prices \
 
 | 表 | 用途 |
 |---|---|
-| `prompt_template` | 提示词模板（v1.1 新增） |
-| `alert_rule` | 预警规则（v1.1 新增） |
-| `alert_event` | 预警触发事件（v1.1 新增） |
-| `latest_price` | 最新价缓存（v1.1 新增） |
-| `ai_analysis` | AI 分析历史 |
-| `doc` | RAG 文档元数据 |
+| `daily_kline` | 日/周/5 分钟 K（k_type: 1=日 2=周 5=5分钟） |
+| `index_kline` / `minute_kline` | 指数 K / 分钟 K |
+| `factors_daily` | Alpha 因子 |
+| `finance_core` | 财务核心指标（EPS/ROE/营收/净利/同比） |
+| `finance_statement` | 财务三表明细（长表 EAV：balance/profit/cashflow） |
+| `macro_indicator` | 宏观（cpi/pmi/lpr_1y/lpr_5y） |
+| `stock_basic` / `stock_industry` | 标的基础信息 / 申万行业 |
+| `doc` | RAG 文档（含 doc_type='announcement' 公告） |
 | `note` | 投研笔记 |
 | `watchlist` / `watchlist_group` | 自选池 |
-| `position` | 持仓 |
-| `trade` | 交易记录 |
-| `trade_review` | 交易复盘 |
-| `daily_kline` / `index_kline` / `minute_kline` | K 线 |
-| `finance_core` | 财务核心指标 |
-| `stock_basic` / `concept` / `stock_industry` | 标的基础信息 |
+| `position` / `trade` / `trade_review` | 持仓 / 交易 / 复盘 |
+| `ai_analysis` | AI 分析历史 |
+| `prompt_template` / `alert_rule` / `alert_event` / `memory` | 模板 / 预警 / 事件 / 记忆 |
 
 ---
 
@@ -232,5 +209,5 @@ curl -X POST http://localhost:8765/api/v1/portfolio/sync-prices \
 | 400 | 请求参数错误 |
 | 403 | 权限拒绝（如删除内置模板） |
 | 404 | 资源不存在 |
-| 422 | 请求体 Pydantic 校验失败 |
+| 422 | 请求体校验失败 |
 | 500 | 服务器内部错误 |

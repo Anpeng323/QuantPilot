@@ -310,11 +310,14 @@ function volSeriesData(rows) {
     }));
 }
 
-async function renderStockDaily() {
+async function renderStockDaily(period) {
     if (!state.stockCode) return;
     try {
         const days = parseInt($('#stock-range').val(), 10) || 120;
-        const data = await api.get(`/api/stock/kline?code=${state.stockCode}&days=${days}`);
+        const url = period === 'weekly'
+            ? `/api/stock/weekly?code=${state.stockCode}&weeks=${days}`
+            : `/api/stock/kline?code=${state.stockCode}&days=${days}`;
+        const data = await api.get(url);
         const rows = data.rows || [];   // 后端已按 trade_date 升序返回（由小到大）
         if (!state.stockChart) {
             state.stockChart = echarts.init(document.getElementById('stock-content'), 'dark');
@@ -1173,7 +1176,8 @@ async function loadNotes() {
             if (n) {
                 $('#note-stock').val(n.stock_code || '');
                 $('#note-title').val(n.title || '');
-                $('#note-content').val(n.content_md || '');
+                if (state.noteEditor) state.noteEditor.value(n.content_md || '');
+                else $('#note-content').val(n.content_md || '');
             }
         });
     } catch (e) {}
@@ -1183,14 +1187,15 @@ async function newNote() {
     state.noteId = null;
     $('#note-stock').val('');
     $('#note-title').val('');
-    $('#note-content').val('');
+    if (state.noteEditor) state.noteEditor.value('');
+    else $('#note-content').val('');
     $('.note-item').removeClass('active');
 }
 
 async function saveNote() {
     const stock = $('#note-stock').val().trim();
     const title = $('#note-title').val().trim();
-    const content = $('#note-content').val();
+    const content = state.noteEditor ? state.noteEditor.value() : $('#note-content').val();
     if (!title) { alert('请输入标题'); return; }
     try {
         if (state.noteId) {
@@ -1210,7 +1215,8 @@ async function deleteNote() {
     try {
         await api.del(`/api/v1/notes/${state.noteId}`);
         state.noteId = null;
-        $('#note-content').val('');
+        if (state.noteEditor) state.noteEditor.value('');
+        else $('#note-content').val('');
         $('#note-title').val('');
         await loadNotes();
     } catch (e) { alert(e.message); }
@@ -1230,6 +1236,29 @@ async function syncNote() {
 $(function() {
     // 导航
     $('.nav-item').on('click', function() { switchPanel($(this).data('panel')); });
+
+    // 笔记：EasyMDE 富编辑器（Markdown + KaTeX 公式预览）
+    if (window.EasyMDE) {
+        state.noteEditor = new EasyMDE({
+            element: document.getElementById('note-content'),
+            spellChecker: false,
+            autosave: { enabled: false },
+            toolbar: ['bold', 'italic', 'heading', '|', 'quote', 'code', 'table',
+                      '|', 'unordered-list', 'ordered-list', '|', 'link', 'preview', 'side-by-side', 'fullscreen'],
+            previewRender: function (text, preview) {
+                const html = window.marked ? marked.parse(text) : text;
+                if (window.renderMathInElement && preview) {
+                    setTimeout(() => renderMathInElement(preview, {
+                        delimiters: [
+                            { left: '$$', right: '$$', display: true },
+                            { left: '$', right: '$', display: false },
+                        ],
+                    }), 0);
+                }
+                return html;
+            },
+        });
+    }
 
     // 全市场快照
     $('#snap-search, #snap-exchange, #snap-sort, #snap-order').on('change keyup', function() {
@@ -1257,18 +1286,21 @@ $(function() {
         $('#stock-subtabs .subtab').removeClass('active');
         $(this).addClass('active');
         const sub = $(this).data('sub');
-        const isDaily = sub === 'daily';
+        const isDaily = sub === 'daily' || sub === 'weekly';
         $('#stock-range').toggle(isDaily);
         $('#minute-date').toggle(sub === 'minute');
-        if (isDaily) renderStockDaily();
+        if (sub === 'weekly') renderStockDaily('weekly');
+        else if (isDaily) renderStockDaily('daily');
         else if (sub === 'minute') loadMinuteDates();
         else if (sub === 'info') alert('概览数据待接入');
         else if (sub === 'factors') alert('因子数据请见 SQL');
     });
 
-    // 个股详情：日 K 日期范围（仅日 K 生效）
+    // 个股详情：日 K / 周 K 日期范围
     $('#stock-range').on('change', () => {
-        if ($('#stock-subtabs .subtab.active').data('sub') === 'daily') renderStockDaily();
+        const sub = $('#stock-subtabs .subtab.active').data('sub');
+        if (sub === 'daily') renderStockDaily('daily');
+        else if (sub === 'weekly') renderStockDaily('weekly');
     });
 
     // 个股详情：5 分钟 K 选择其他天

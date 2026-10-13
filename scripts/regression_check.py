@@ -60,7 +60,8 @@ def check_data():
             ok(f"数据已更新到最近交易日 {ref}")
 
         # 主键无重复
-        pk = [("daily_kline","stock_code, trade_date"),
+        # 注：daily_kline 复用存储日K(k_type=1)与周K(k_type=2)，唯一键须含 k_type
+        pk = [("daily_kline","stock_code, trade_date, k_type, adjust_type"),
               ("minute_kline","stock_code, trade_date, trade_time"),
               ("factors_daily","stock_code, trade_date"),
               ("index_kline","index_code, trade_date")]

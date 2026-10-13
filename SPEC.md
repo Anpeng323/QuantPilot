@@ -223,7 +223,7 @@
 
 | Phase | 关键交付 | 状态 |
 |---|---|---|
-| A 数据夯实 | 三表明细/宏观/公告/数据接入分析器/EasyMDE/文档 | 🟡 进行中（✅三表明细`finance_statement`+宏观`macro_indicator`已接入并挂回填；✅`finance_core`已接通`financial.py`/`valuation.py`；⏳公告爬虫/周线/EasyMDE/文档待做） |
+| A 数据夯实 | 三表明细/宏观/公告/数据接入分析器/周线/EasyMDE/文档 | ✅ 完成（三表明细+宏观+公告已接入并挂盘后回填；`finance_core`接通分析器；周K聚合+k_type=2；笔记 EasyMDE+KaTeX；USER_GUIDE/API 文档已补全） |
 | B 分析深度 | industry/macro/comparative/DCF/风险接公告/盈利拆解 | ❌ |
 | C 文本产业链 | 资讯去噪/研报OCR/产业链/对比问答 | ❌ |
 | D 工作台 | 研究卡片/看板/规则库/复盘αβ/记忆 | ❌ |

@@ -267,6 +267,24 @@ def create_app() -> FastAPI:
         """
         return web_db.query_dict(sql, params=[code, start, latest], limit=days)
 
+    # ---------- 个股周 K（k_type=2，由日 K 聚合） ----------
+    @app.get("/api/stock/weekly")
+    def stock_weekly(code: str = Query(...), weeks: int = Query(120, le=2000)):
+        latest = web_db.get_latest_trade_date()
+        start = str(web_db.get_conn().execute(
+            "SELECT MIN(trade_date) FROM (SELECT trade_date FROM daily_kline "
+            "WHERE stock_code=? AND k_type=2 AND trade_date <= ? ORDER BY trade_date DESC LIMIT ?)",
+            [code, latest, weeks],
+        ).fetchone()[0])
+        sql = """
+            SELECT trade_date, open, high, low, close, pre_close, change, change_pct,
+                   volume, amount
+            FROM daily_kline
+            WHERE stock_code=? AND k_type=2 AND trade_date BETWEEN ? AND ?
+            ORDER BY trade_date
+        """
+        return web_db.query_dict(sql, params=[code, start, latest], limit=weeks)
+
     # ---------- 个股分时（5 分钟 K 线，默认取最新交易日） ----------
     @app.get("/api/stock/minute")
     def stock_minute(

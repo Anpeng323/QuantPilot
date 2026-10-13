@@ -353,3 +353,12 @@ def ingest_news_list(limit: int = 30):
 @router.get("/ingest/announcements")
 def ingest_announcements(stock_code: str = "", limit: int = 50):
     return di_ann.list_announcements(stock_code=stock_code, limit=limit)
+
+
+@router.post("/ingest/announcements")
+def ingest_announcements_crawl(body: dict = None):
+    """触发公告抓取（akshare 东方财富，按最近交易日）。body: {days: int, date: str}"""
+    body = body or {}
+    days = int(body.get("days", 1))
+    date_str = body.get("date")
+    return di_ann.run(days=days, date_str=date_str)
