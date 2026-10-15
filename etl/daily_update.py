@@ -12,7 +12,7 @@ import pandas as pd
 import adata
 from datetime import datetime
 from etl.db import get_conn
-from etl.utils import get_logger, job_runner, upsert_df
+from etl.utils import get_logger, job_runner, upsert_df, suppressed_indexes
 from etl.fetchers import fetch_sina_kline, fetch_sina_finance_index, fetch_sina_index_kline
 from data_ingest import market_cap as _mc
 from data_ingest import finance_statements as _fs
@@ -66,27 +66,29 @@ def update_daily_kline(conn, datalen: int = 30, batch_size: int = 300) -> int:
     failed = []
     batch_dfs: list[pd.DataFrame] = []
 
-    for i, code in enumerate(codes, 1):
-        try:
-            df = fetch_sina_kline(code, k_type=1, datalen=datalen)
-            if df.empty:
-                continue
-            batch_dfs.append(df)
-            total += len(df)
-        except Exception as e:
-            failed.append((code, str(e)[:80]))
+    # 批量 DELETE+INSERT 前临时卸掉二级索引，绕开 DuckDB 已知崩溃
+    with suppressed_indexes(conn, "daily_kline"):
+        for i, code in enumerate(codes, 1):
+            try:
+                df = fetch_sina_kline(code, k_type=1, datalen=datalen)
+                if df.empty:
+                    continue
+                batch_dfs.append(df)
+                total += len(df)
+            except Exception as e:
+                failed.append((code, str(e)[:80]))
 
-        if len(batch_dfs) >= batch_size:
+            if len(batch_dfs) >= batch_size:
+                upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "daily_kline",
+                          ["stock_code", "trade_date", "k_type", "adjust_type"], log=None)
+                batch_dfs.clear()
+
+            if i % 500 == 0 or i == len(codes):
+                log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  本次 +{total:,} 条")
+
+        if batch_dfs:
             upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "daily_kline",
                       ["stock_code", "trade_date", "k_type", "adjust_type"], log=None)
-            batch_dfs.clear()
-
-        if i % 500 == 0 or i == len(codes):
-            log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  本次 +{total:,} 条")
-
-    if batch_dfs:
-        upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "daily_kline",
-                  ["stock_code", "trade_date", "k_type", "adjust_type"], log=None)
 
     if failed:
         log.warning(f"失败 {len(failed)} 只，前 5: {failed[:5]}")
@@ -126,32 +128,33 @@ def update_minute_kline(conn, k_type: int = 5, datalen: int = 100, batch_size: i
     total = 0
     failed = []
 
-    for i, code in enumerate(codes, 1):
-        try:
-            df = fetch_sina_kline(code, k_type=k_type, datalen=datalen)
-            if df.empty:
-                continue
-            df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.date
-            df["trade_time"] = pd.to_datetime(df["trade_time"])
-            df["k_type"]     = k_type
-            df = df[["stock_code", "trade_time", "trade_date", "k_type",
-                     "open", "high", "low", "close", "volume", "amount"]]
-            batch_dfs.append(df)
-            total += len(df)
-        except Exception as e:
-            failed.append((code, str(e)[:80]))
+    with suppressed_indexes(conn, "minute_kline"):
+        for i, code in enumerate(codes, 1):
+            try:
+                df = fetch_sina_kline(code, k_type=k_type, datalen=datalen)
+                if df.empty:
+                    continue
+                df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.date
+                df["trade_time"] = pd.to_datetime(df["trade_time"])
+                df["k_type"]     = k_type
+                df = df[["stock_code", "trade_time", "trade_date", "k_type",
+                         "open", "high", "low", "close", "volume", "amount"]]
+                batch_dfs.append(df)
+                total += len(df)
+            except Exception as e:
+                failed.append((code, str(e)[:80]))
 
-        if len(batch_dfs) >= batch_size:
+            if len(batch_dfs) >= batch_size:
+                upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "minute_kline",
+                          ["stock_code", "trade_time", "k_type"], log=None)
+                batch_dfs.clear()
+
+            if i % 1000 == 0 or i == len(codes):
+                log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  本次 +{total:,} 条")
+
+        if batch_dfs:
             upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "minute_kline",
                       ["stock_code", "trade_time", "k_type"], log=None)
-            batch_dfs.clear()
-
-        if i % 1000 == 0 or i == len(codes):
-            log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  本次 +{total:,} 条")
-
-    if batch_dfs:
-        upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "minute_kline",
-                  ["stock_code", "trade_time", "k_type"], log=None)
     if failed:
         log.warning(f"失败 {len(failed)} 只，前 5: {failed[:5]}")
     return total
@@ -172,27 +175,28 @@ def update_index_minute_kline(conn, k_type: int = 5, datalen: int = 100, batch_s
     total = 0
     failed = []
 
-    for i, code in enumerate(codes, 1):
-        try:
-            df = fetch_sina_index_kline(code, k_type=k_type, datalen=datalen)
-            if df.empty:
-                continue
-            batch_dfs.append(df)
-            total += len(df)
-        except Exception as e:
-            failed.append((code, str(e)[:80]))
+    with suppressed_indexes(conn, "index_minute_kline"):
+        for i, code in enumerate(codes, 1):
+            try:
+                df = fetch_sina_index_kline(code, k_type=k_type, datalen=datalen)
+                if df.empty:
+                    continue
+                batch_dfs.append(df)
+                total += len(df)
+            except Exception as e:
+                failed.append((code, str(e)[:80]))
 
-        if len(batch_dfs) >= batch_size:
+            if len(batch_dfs) >= batch_size:
+                upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "index_minute_kline",
+                          ["index_code", "trade_time", "k_type"], log=None)
+                batch_dfs.clear()
+
+            if i % 10 == 0 or i == len(codes):
+                log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  本次 +{total:,} 条")
+
+        if batch_dfs:
             upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "index_minute_kline",
                       ["index_code", "trade_time", "k_type"], log=None)
-            batch_dfs.clear()
-
-        if i % 10 == 0 or i == len(codes):
-            log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  本次 +{total:,} 条")
-
-    if batch_dfs:
-        upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "index_minute_kline",
-                  ["index_code", "trade_time", "k_type"], log=None)
     if failed:
         log.warning(f"失败 {len(failed)} 个，前 5: {failed[:5]}")
     return total

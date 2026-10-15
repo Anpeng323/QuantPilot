@@ -4,7 +4,7 @@ AI 模型路由器：按 task_type 自动选最合适的 LLM 模型。
 默认策略：
 - 深度分析任务（财报 / 估值 / DCF / 行业）→ MiniMax-M3（最强模型）
 - 轻量任务（分类 / 抽取 / 摘要 / 情绪）→ MiniMax-M3.1-Flash-Preview（快且便宜）
-- RAG 长文本问答 → qwen-long（128k 上下文）
+- RAG 长文本问答 → MiniMax-M3（1M 上下文）
 
 可通过 set_config() 覆盖配置。
 """
@@ -33,7 +33,7 @@ DEFAULT_CONFIG: Dict[str, str] = {
     "summary":            "MiniMax-M3.1-Flash-Preview",
     "alert_classify":    "MiniMax-M3.1-Flash-Preview",
     # 长文本
-    "rag_qa":             "qwen-long",
+    "rag_qa":             "MiniMax-M3",
 }
 
 _CONFIG: Dict[str, str] = copy.deepcopy(DEFAULT_CONFIG)

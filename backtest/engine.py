@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
 from .errors import BacktestError, SignalParseError
 from .signal import SignalParser
@@ -57,17 +58,22 @@ def _align_benchmark(bench_df, dates, initial_cash):
     return [ (v / base * initial_cash) if v is not None else None for v in vals ]
 
 
-def _run(df: pd.DataFrame, req: BacktestRequest) -> dict:
+def _run(df: pd.DataFrame, req: BacktestRequest, signal: "pd.Series | None" = None) -> dict:
     if df is None or df.empty or len(df) < 2:
         raise BacktestError("数据不足：该区间无足够行情，请调整起止日期或股票代码")
     df = df.sort_values("trade_date").reset_index(drop=True)
 
-    # 1) 信号求值（注入指标列，惰性计算）
-    try:
-        parser = SignalParser(req.signal)
-        sig = parser.evaluate(df)
-    except SignalParseError:
-        raise  # 直接上抛 → API 映射 400
+    # 1) 信号求值
+    if signal is None:
+        # DSL 模式：解析 req.signal 字符串
+        try:
+            parser = SignalParser(req.signal)
+            sig = parser.evaluate(df)
+        except SignalParseError:
+            raise  # 直接上抛 → API 映射 400
+    else:
+        # Phase 3 模式：直接使用外部（沙箱）算出的布尔信号
+        sig = pd.Series(np.asarray(signal, dtype=bool), index=df.index)
 
     nan_frac = float(sig.isna().mean())
     if nan_frac > 0.2:
@@ -162,13 +168,19 @@ def _run(df: pd.DataFrame, req: BacktestRequest) -> dict:
         "trades": trades,
         "equity_curve": equity_curve,
         "metrics": metrics,
+        # 实际用于对标的指数（None 表示未启用）；benchmark_value 全为 None 即数据缺失
+        "benchmark": req.benchmark,
         "data_flag": data_flag,
     }
 
 
-def run_backtest_df(df: pd.DataFrame, req: BacktestRequest) -> dict:
-    """直接对给定 DataFrame 回测（供测试/复用，不触达数据库）。"""
-    return _run(df, req)
+def run_backtest_df(df: pd.DataFrame, req: BacktestRequest, signal: "pd.Series | None" = None) -> dict:
+    """直接对给定 DataFrame 回测（供测试/复用，不触达数据库）。
+
+    signal: 可选，布尔 Series（与 df 等长同序）。传入时跳过 DSL 解析，
+            直接作为买卖信号（Phase 3 自然语言策略沙箱产出）。
+    """
+    return _run(df, req, signal=signal)
 
 
 def run_backtest(req: BacktestRequest) -> dict:

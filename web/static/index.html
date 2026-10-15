@@ -5,15 +5,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Quant Workbench · 个人 AI 投研平台</title>
 <link rel="stylesheet" href="/static/style.css">
-<!-- EasyMDE（笔记富编辑）+ KaTeX（公式渲染） -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde@2.18.0/dist/easymde.min.css">
-<script src="https://cdn.jsdelivr.net/npm/easymde@2.18.0/dist/easymde.min.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+<link rel="icon" href="data:,">
+<!-- EasyMDE（笔记富编辑）+ KaTeX（公式渲染）：本地托管，避免外网 CDN 访问不稳定 -->
+<link rel="stylesheet" href="/static/vendor/easymde.min.css">
+<script src="/static/vendor/easymde.min.js"></script>
+<link rel="stylesheet" href="/static/vendor/katex.min.css">
+<script src="/static/vendor/katex.min.js"></script>
+<script src="/static/vendor/auto-render.min.js"></script>
+<script src="/static/vendor/marked.min.js"></script>
+<script src="/static/vendor/echarts.min.js"></script>
+<script src="/static/vendor/jquery.min.js"></script>
+<style>
+  .disclaimer-banner { background:#fff7e6; border:1px solid #ffd591; color:#ad6800;
+    padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:13px; }
+  .bt-steps { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; }
+  .bt-step { padding:4px 10px; border-radius:14px; font-size:12px; background:#f0f0f0;
+    color:#888; border:1px solid #e0e0e0; }
+  .bt-step.active { background:#e6f4ff; color:#1677ff; border-color:#91caff; }
+  .bt-step.done { background:#f6ffed; color:#389e0d; border-color:#b7eb8f; }
+  .bt-step.fail { background:#fff1f0; color:#cf1322; border-color:#ffccc7; }
+  /* 代码与回测图上下布局 */
+  .bt-layout { display:grid; grid-template-columns:1fr; gap:16px; margin-top:12px; }
+  .code-block { background:#1e1e1e; color:#d4d4d4; padding:12px; border-radius:6px;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+    white-space:pre-wrap; word-break:break-all; max-height:260px; overflow:auto; }
+  .card .ghost { background:transparent; border:1px solid #ccc; color:#555; }
+</style>
 </head>
 <body>
 <div class="app">
@@ -30,10 +47,16 @@
     </div>
 
     <div class="nav-section">
+      <div class="nav-section-title">资讯</div>
+      <div class="nav-item" data-panel="news"><span class="nav-icon">📰</span> 新闻聚合</div>
+    </div>
+
+    <div class="nav-section">
       <div class="nav-section-title">投研</div>
       <div class="nav-item" data-panel="ai"><span class="nav-icon">🤖</span> AI 分析</div>
       <div class="nav-item" data-panel="rag"><span class="nav-icon">📚</span> RAG 知识库</div>
-      <div class="nav-item" data-panel="prompts"><span class="nav-icon">💬</span> 提示词库</div>
+      <div class="nav-item" data-panel="bt"><span class="nav-icon">🧪</span> NL 回测</div>
+      <div class="nav-item" data-panel="agent"><span class="nav-icon">💡</span> 智能问答</div>
     </div>
 
     <div class="nav-section">
@@ -128,6 +151,7 @@
           <button class="subtab" data-sub="minute">5分钟K</button>
           <button class="subtab" data-sub="factors">因子</button>
           <button class="subtab" data-sub="info">概览</button>
+          <button class="subtab" data-sub="news">相关新闻</button>
           <select id="stock-range" style="margin-left:auto; align-self:center">
             <option value="30">近 30 日</option>
             <option value="60">近 60 日</option>
@@ -142,6 +166,7 @@
           </select>
         </div>
         <div id="stock-content" class="chart-area"></div>
+        <div id="stock-news" class="news-list" style="display:none"></div>
       </div>
     </section>
 
@@ -225,14 +250,13 @@ ORDER BY trade_date DESC LIMIT 30;</textarea>
         </div>
         <div class="toolbar">
           <input type="text" id="ai-stock" placeholder="股票名 或 代码 (如 平安银行 或 000001)" style="flex:1">
-          <select id="ai-type">
-            <option value="financial">📊 财报解读</option>
-            <option value="risk">⚠️ 风险扫描</option>
-            <option value="valuation">💰 估值测算</option>
-            <option value="sentiment">📰 研报观点汇总</option>
-          </select>
-          <button id="ai-run" class="primary">运行分析</button>
+          <button id="ai-run" class="primary">生成综合报告</button>
           <span class="info" id="ai-status"></span>
+        </div>
+        <div id="ai-progress" class="ai-progress" style="display:none">
+          <div class="ai-progress-bar"><div class="ai-progress-fill" id="ai-progress-fill"></div></div>
+          <ol class="ai-steps" id="ai-steps"></ol>
+          <div class="ai-progress-label" id="ai-progress-label"></div>
         </div>
         <div id="ai-result" class="ai-result"></div>
         <div id="ai-exports" class="toolbar mt-4" style="display:none">
@@ -280,24 +304,6 @@ ORDER BY trade_date DESC LIMIT 30;</textarea>
         </div>
         <div id="rag-answer" class="rag-answer"></div>
         <div id="rag-docs-list" class="table-wrap mt-4" style="max-height:240px"></div>
-      </div>
-    </section>
-
-    <!-- 💬 提示词库 -->
-    <section class="panel" id="panel-prompts">
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">💬 提示词模板库</div>
-          <div class="card-subtitle">内置模板不可改 · 自定义模板可增删改</div>
-        </div>
-        <div class="toolbar">
-          <input type="text" id="prompt-name" placeholder="模板名称">
-          <input type="text" id="prompt-category" placeholder="分类 (financial/risk/custom...)">
-          <input type="text" id="prompt-vars" placeholder='变量 JSON，如 ["stock_code"]'>
-          <button id="prompt-create" class="primary">新建</button>
-        </div>
-        <textarea id="prompt-body" placeholder="模板正文（jinja2 语法：{{ stock_code }}）" rows="4"></textarea>
-        <div id="prompts-list" class="table-wrap mt-4"></div>
       </div>
     </section>
 
@@ -399,6 +405,138 @@ ORDER BY trade_date DESC LIMIT 30;</textarea>
               <span class="info" id="note-status"></span>
             </div>
           </main>
+        </div>
+      </div>
+    </section>
+
+    <!-- 🧪 NL 回测（Phase 3 自然语言策略自动回测） -->
+    <section class="panel" id="panel-bt">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🧪 自然语言策略回测</div>
+          <div class="card-subtitle">中文描述策略 → LLM 生成代码 → AST 安全校验 → 受限沙箱执行 → 回测绩效</div>
+        </div>
+        <div class="disclaimer-banner" id="bt-disclaimer">⚠️ AI 生成策略仅供研究参考，不构成任何投资建议</div>
+
+        <div class="toolbar">
+          <span class="suggest-anchor" style="flex:0 0 240px">
+            <input type="text" id="bt-stock" placeholder="股票名 / 代码（如 茅台 或 600519）">
+          </span>
+          <input type="text" id="bt-nl" placeholder='策略描述，如「5日均线上穿20日均线」或「站上60日线且RSI低于40」' style="flex:1">
+          <button id="bt-run" class="primary">生成并回测</button>
+          <span class="info" id="bt-status"></span>
+        </div>
+        <div class="toolbar mt-2">
+          <label>回看</label>
+          <select id="bt-days">
+            <option value="30">近 30 日</option>
+            <option value="60">近 60 日</option>
+            <option value="90">近 90 日</option>
+            <option value="180">近 6 个月</option>
+            <option value="250">近 1 年</option>
+            <option value="500" selected>近 2 年</option>
+            <option value="1000">近 4 年</option>
+            <option value="1500">近 6 年</option>
+          </select>
+          <label>成交价</label>
+          <select id="bt-fill">
+            <option value="close">收盘价</option>
+            <option value="open">开盘价</option>
+          </select>
+          <label>初始资金</label>
+          <input type="number" id="bt-cash" value="100000" style="width:100px">
+          <label>基准</label>
+          <select id="bt-benchmark" title="用于计算超额收益与权益图中的基准线">
+            <option value="">加载中…</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="bt-save"> 保存为策略</label>
+        </div>
+
+        <div class="bt-steps" id="bt-steps" style="display:none">
+          <span class="bt-step" data-step="gen">① 生成代码</span>
+          <span class="bt-step" data-step="ast">② 安全校验</span>
+          <span class="bt-step" data-step="exec">③ 沙箱执行</span>
+          <span class="bt-step" data-step="bt">④ 回测绩效</span>
+        </div>
+
+        <div id="bt-error" class="err" style="display:none;white-space:pre-wrap"></div>
+
+        <div class="bt-layout">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">生成代码（可审阅 / 复制）</div>
+              <button id="bt-copy" class="ghost">复制</button>
+            </div>
+            <div id="bt-rules" class="info" style="display:none;margin-bottom:8px"></div>
+            <pre id="bt-code" class="code-block"># 运行后显示 LLM 生成的策略代码</pre>
+          </div>
+          <div class="bt-result">
+            <div id="bt-metrics" class="metric-row card-grid card-grid-4"></div>
+            <div id="bt-chart" class="chart-area" style="height:700px"></div>
+            <div id="bt-strategy" class="info"></div>
+          </div>
+        </div>
+
+        <div class="card mt-4">
+          <div class="card-header"><div class="card-title">交易明细</div></div>
+          <div class="table-wrap" id="bt-trades"></div>
+        </div>
+
+        <div class="card mt-4">
+          <div class="card-header"><div class="card-title">已保存策略（代码哈希去重）</div></div>
+          <div class="table-wrap" id="bt-saved"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 💡 智能问答 Agent（模块4 · 多轮对话） -->
+    <section class="panel" id="panel-agent">
+      <div class="chat-wrap">
+        <div class="chat-header">
+          <div>
+            <div class="card-title">💡 AI 投研对话 Agent</div>
+            <div class="card-subtitle">MiniMax-M3 驱动 · 多轮对话 · 自动调用 行情 / 财报 / 对比 / 回测 / RAG 工具</div>
+          </div>
+          <button class="ghost" id="agent-clear" title="清空当前对话">🗑 新对话</button>
+        </div>
+        <div class="disclaimer-banner">⚠️ AI 生成内容仅供参考，不构成任何投资建议；研究观点不代表确定性收益。</div>
+        <div id="agent-chat" class="chat-body"></div>
+        <div class="chat-suggest" id="agent-suggest"></div>
+        <div class="chat-input">
+          <textarea id="agent-q" rows="1" placeholder="问我任何投研问题…（Enter 发送 / Shift+Enter 换行）"></textarea>
+          <button id="agent-ask" class="primary">发送</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 📰 新闻聚合 -->
+    <section class="panel" id="panel-news">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📰 财经新闻聚合</div>
+          <div class="card-subtitle">多来源抓取 · 东方财富 / 新浪 / RSS</div>
+        </div>
+        <div class="disclaimer-banner">⚠️ AI 新闻解读由大模型生成，仅供参考，不构成任何投资建议</div>
+        <div class="toolbar">
+          <button id="news-crawl" class="primary">🔄 抓取最新</button>
+          <select id="news-source">
+            <option value="">全部来源</option>
+            <option value="kr36">36氪</option>
+            <option value="eastmoney">东方财富</option>
+            <option value="sina">新浪财经</option>
+          </select>
+          <input type="text" id="news-stock" placeholder="关联股票代码（可空）" style="width:140px">
+          <input type="text" id="news-tag" placeholder="标签筛选（可空）" style="width:120px">
+          <input type="text" id="news-q" placeholder="关键词搜索（可空）" style="flex:1">
+          <button id="news-refresh">刷新</button>
+          <span class="info" id="news-status"></span>
+        </div>
+        <div id="news-list" class="news-list"></div>
+        <div class="pager">
+          <button id="news-prev">上一页</button>
+          <span>第 <input type="number" id="news-page" min="1" value="1"> 页</span>
+          <span id="news-pages"></span>
+          <button id="news-next">下一页</button>
         </div>
       </div>
     </section>

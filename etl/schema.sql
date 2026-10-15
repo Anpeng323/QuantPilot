@@ -222,12 +222,33 @@ CREATE TABLE IF NOT EXISTS doc (
     industry_code   VARCHAR(10),
     title           VARCHAR(256),
     publish_date    DATE,
+    publish_time    TIMESTAMP,
     file_path       VARCHAR(512),
     url             VARCHAR(512),
     chunk_count     INT DEFAULT 0,
     ingested_at     TIMESTAMP DEFAULT current_timestamp,
     metadata        VARCHAR
 );
+
+-- doc 表常用查询索引（新闻聚合看板：按类型/时间/来源/个股过滤）
+CREATE INDEX IF NOT EXISTS idx_doc_news_dt    ON doc(doc_type, publish_date DESC);
+CREATE INDEX IF NOT EXISTS idx_doc_news_src   ON doc(doc_type, source);
+CREATE INDEX IF NOT EXISTS idx_doc_news_stock ON doc(doc_type, stock_code);
+
+-- 新闻 AI 分析（按 doc_id 缓存，幂等 upsert）
+CREATE TABLE IF NOT EXISTS news_analysis (
+    doc_id       VARCHAR PRIMARY KEY,
+    stock_code   VARCHAR(6),
+    sentiment    VARCHAR(8),
+    summary      VARCHAR(512),
+    impact_text  VARCHAR(1024),
+    detail       TEXT,
+    model_used   VARCHAR(32),
+    tokens_used  INT,
+    cost_cny     DOUBLE,
+    created_at   TIMESTAMP DEFAULT current_timestamp
+);
+CREATE INDEX IF NOT EXISTS idx_news_analysis_stock ON news_analysis(stock_code);
 
 -- 自选池
 CREATE TABLE IF NOT EXISTS watchlist_group (

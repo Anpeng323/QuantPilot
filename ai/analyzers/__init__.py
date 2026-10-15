@@ -1,4 +1,4 @@
-from . import financial, risk, valuation, sentiment, industry, macro, comparative, dcf, profit
+from . import financial, risk, valuation, sentiment, industry, macro, comparative, dcf, profit, comprehensive
 
 DISPATCH = {
     "financial": financial.run,
@@ -15,6 +15,9 @@ DISPATCH = {
     "valuation_dcf": dcf.run,
     "profit": profit.run,
     "profit_breakdown": profit.run,
+    # 统一综合报告（不区分财报/风险/估值/研报）
+    "comprehensive": comprehensive.run,
+    "report": comprehensive.run,
 }
 
 

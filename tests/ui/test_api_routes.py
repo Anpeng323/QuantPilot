@@ -16,6 +16,10 @@ TDD: API 路由（v1.1 新增的 7 个模块都要有 REST 端点）
 - /api/v1/exports/analysis/{id}/pdf  GET
 - /api/v1/exports/watchlist/{group}/excel GET
 - /api/v1/router/models     GET
+
+个股详情（web/app.py）：
+- /api/stock/factors        GET
+- /api/stock/overview       GET
 """
 import pytest
 import os
@@ -223,3 +227,91 @@ class TestRouterAPI:
         data = r.json()
         assert "config" in data
         assert "financial_summary" in data["config"]
+
+
+@pytest.fixture
+def detail_client(tmp_path):
+    """个股详情接口测试：临时库需同时挂到 etl.db 与 web.db（web/db.py 导入时绑定 DB_PATH）"""
+    from etl import db as db_mod
+    orig_etl = db_mod.DB_PATH
+    db_mod.DB_PATH = tmp_path / "detail.duckdb"
+    db_mod.init_schema()
+
+    import web.db as web_db
+    orig_web = web_db.DB_PATH
+    web_db.DB_PATH = db_mod.DB_PATH
+
+    from web.app import create_app
+    from fastapi.testclient import TestClient
+    client = TestClient(create_app())
+    yield client
+
+    web_db.DB_PATH = orig_web
+    db_mod.DB_PATH = orig_etl
+
+
+class TestStockDetailAPI:
+    CODE = "688300"
+
+    @pytest.fixture(autouse=True)
+    def _seed(self, detail_client):
+        """灌入 stock_basic + 日K + factors_daily（factors_daily 不在 schema.sql，需自建）"""
+        from etl.db import get_conn
+        conn = get_conn()
+        conn.execute(
+            "INSERT INTO stock_basic (stock_code, short_name, exchange, list_date) "
+            "VALUES (?, '联瑞新材', 'SH', '2019-11-15')", [self.CODE])
+        for d, c in [("2024-09-02", 100.0), ("2024-09-03", 105.0)]:
+            conn.execute(
+                "INSERT INTO daily_kline (stock_code, trade_date, open, high, low, close, pre_close, "
+                "change, change_pct, volume, amount, k_type) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                [self.CODE, d, c - 1, c + 2, c - 2, c, c - 1, 1.0, 1.0, 1000, c * 1000])
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS factors_daily (
+                stock_code VARCHAR, trade_date DATE, close DOUBLE,
+                mom_5d DOUBLE, mom_10d DOUBLE, mom_20d DOUBLE, mom_60d DOUBLE,
+                vol_20d DOUBLE, vol_60d DOUBLE, volume_ratio_20d DOUBLE,
+                amount_ratio_20d DOUBLE, price_position_20d DOUBLE,
+                bias_ma5 DOUBLE, bias_ma20 DOUBLE, bias_ma60 DOUBLE)
+        """)
+        conn.execute(
+            "INSERT INTO factors_daily VALUES "
+            "(?, '2024-09-03', 105.0, 0.05, 0.06, 0.07, 0.08, 0.30, 0.35, 1.20, 1.10, 0.60, 0.02, 0.03, 0.04)",
+            [self.CODE])
+        return detail_client
+
+    def test_factors_returns_rows(self, _seed):
+        r = _seed.get("/api/stock/factors", params={"code": self.CODE, "days": 10})
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["row_count"] == 1
+        row = data["rows"][0]
+        assert data["columns"][:3] == ["trade_date", "close", "mom_5d"]
+        assert row["trade_date"] == "2024-09-03"      # date → str
+        assert row["mom_20d"] == 0.07
+
+    def test_factors_empty_is_graceful(self, _seed):
+        r = _seed.get("/api/stock/factors", params={"code": "000000"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["rows"] == []
+        assert "暂无因子数据" in data["message"]
+
+    def test_overview_full(self, _seed):
+        r = _seed.get("/api/stock/overview", params={"code": self.CODE})
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["stock_code"] == self.CODE and d["short_name"] == "联瑞新材"
+        assert d["quote"]["trade_date"] == "2024-09-03"   # 取最新交易日
+        assert d["quote"]["close"] == 105.0
+        assert d["stats"]["bars"] == 2
+        assert d["valuation"] is None                      # 无财务数据 → 降级
+        assert d["industries"] == []
+        assert d["factors"]["trade_date"] == "2024-09-03"  # 因子快照存在
+        assert d["factors"]["mom_20d"] == 0.07
+
+    def test_overview_unknown_stock(self, _seed):
+        r = _seed.get("/api/stock/overview", params={"code": "999999"})
+        assert r.status_code == 200
+        assert "error" in r.json()

@@ -20,7 +20,7 @@ class TestRouteModel:
     def test_rag_uses_long_context(self):
         from ai.router import route_model
         m = route_model("rag_qa")
-        assert m == "qwen-long", f"rag_qa 应该用 qwen-long，实际={m}"
+        assert m == "MiniMax-M3", f"rag_qa 应该用 MiniMax-M3，实际={m}"
 
     def test_unknown_task_returns_default(self):
         from ai.router import route_model

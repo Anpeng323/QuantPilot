@@ -50,7 +50,20 @@ def _add_backtest_routes(router: APIRouter):
     from backtest.cost import CostConfig
     from backtest.signal import validate_signal
     from backtest.errors import BacktestError, SignalParseError
+    from backtest.benchmark import DEFAULT_BENCHMARK, list_benchmarks
     from backtest import repo
+
+    def _benchmark_of(payload: dict):
+        """基准指数：未指定时默认沪深300；显式传 none/off/无 则关闭对标。"""
+        raw = (payload or {}).get("benchmark")
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            return DEFAULT_BENCHMARK
+        code = str(raw).strip()
+        return None if code.lower() in ("none", "off", "no", "-", "无", "不对比") else code
+
+    @router.get("/backtest/benchmarks")
+    def backtest_benchmarks():
+        return {"benchmarks": list_benchmarks(), "default": DEFAULT_BENCHMARK}
 
     @router.post("/backtest/run")
     def backtest_run(payload: dict = Body(...)):
@@ -58,12 +71,17 @@ def _add_backtest_routes(router: APIRouter):
         signal = (payload.get("signal") or "").strip()
         start = (payload.get("start") or "").strip()
         end = (payload.get("end") or "").strip()
+        days = payload.get("days")
         if not stock_code:
             raise HTTPException(400, "stock_code required")
         if not signal:
             raise HTTPException(400, "signal required")
         if not start or not end:
-            raise HTTPException(400, "start/end required")
+            if days:
+                from backtest.nl import resolve_default_range
+                end, start = resolve_default_range(days)
+            else:
+                raise HTTPException(400, "start/end 或 days 必须提供其一")
         if start > end:
             raise HTTPException(400, "回测区间无效，请检查起止日期（start 需早于 end）")
         try:
@@ -91,7 +109,7 @@ def _add_backtest_routes(router: APIRouter):
         req = BacktestRequest(
             stock_code=stock_code, start=start, end=end, signal=signal,
             initial_cash=initial_cash, fill_price=fill_price, cost=cost,
-            benchmark=payload.get("benchmark"), save=bool(payload.get("save", False)),
+            benchmark=_benchmark_of(payload), save=bool(payload.get("save", False)),
         )
         try:
             result = run_backtest(req)
@@ -119,6 +137,83 @@ def _add_backtest_routes(router: APIRouter):
         if not task:
             raise HTTPException(404, "回测任务不存在")
         return task
+
+    # ============ Phase 3：自然语言策略自动回测 ============
+    from backtest import nl as _nl
+    from backtest.cost import CostConfig as _CostConfig
+    from backtest.errors import BacktestError as _BacktestError
+    from backtest.errors import SignalParseError as _SignalParseError
+
+    @router.get("/backtest/nl/indicators")
+    def nl_indicators():
+        return {"indicators": _nl.describe_indicators()}
+
+    @router.post("/backtest/nl/run")
+    def nl_backtest_run(payload: dict = Body(...)):
+        nl = (payload.get("natural_language") or "").strip()
+        stock_code = (payload.get("stock_code") or "").strip()
+        if not nl:
+            raise HTTPException(400, "natural_language required")
+        if not stock_code:
+            raise HTTPException(400, "stock_code required")
+        # 兼容直接传股票名称/简称（与搜索栏一致的模糊查询），解析为 6 位代码
+        if not (len(stock_code) == 6 and stock_code.isdigit()):
+            try:
+                from ai.agent.stocks import resolve_stock_codes
+                cands = resolve_stock_codes(stock_code)
+            except Exception:
+                cands = []
+            if not cands:
+                raise HTTPException(400, f"未找到股票「{stock_code}」，请输入 6 位代码或完整名称")
+            stock_code = cands[0]
+
+        start = (payload.get("start") or "").strip()
+        end = (payload.get("end") or "").strip()
+        days = payload.get("days")
+
+        try:
+            initial_cash = float(payload.get("initial_cash", 100000))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "initial_cash 必须为数字")
+        if initial_cash <= 0:
+            raise HTTPException(400, "initial_cash 需大于 0")
+        fill_price = payload.get("fill_price", "close")
+        if fill_price not in ("open", "close"):
+            raise HTTPException(400, "fill_price 仅支持 open / close")
+
+        cost_d = payload.get("cost") or {}
+        cost = _CostConfig(
+            commission=float(cost_d.get("commission", 0.00025)),
+            min_commission=float(cost_d.get("min_commission", 5.0)),
+            stamp=float(cost_d.get("stamp", 0.0005)),
+            transfer=float(cost_d.get("transfer", 0.00001)),
+            slippage=float(cost_d.get("slippage", 0.0)),
+        )
+
+        try:
+            result = _nl.run_nl_backtest(
+                nl, stock_code=stock_code,
+                start=start or None, end=end or None, days=days,
+                initial_cash=initial_cash, fill_price=fill_price,
+                cost=cost, benchmark=_benchmark_of(payload),
+                save=bool(payload.get("save", False)), name=payload.get("name"),
+            )
+        except (_BacktestError, _SignalParseError) as e:
+            raise HTTPException(400, str(e))
+        return result
+
+    @router.get("/backtest/strategies")
+    def nl_strategies(limit: int = Query(50, ge=1, le=200)):
+        from backtest import repo as _repo
+        return {"strategies": _repo.list_strategies(limit)}
+
+    @router.get("/backtest/strategies/{sid}")
+    def nl_strategy_detail(sid: str):
+        from backtest import repo as _repo
+        s = _repo.get_strategy(sid)
+        if not s:
+            raise HTTPException(404, "策略记录不存在")
+        return s
 
 
 def register_v1_1_routes(app):

@@ -15,11 +15,23 @@ def get_conn(read_only: bool = False) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DB_PATH), read_only=read_only)
 
 
+# 兼容旧库的增量迁移（DDL 幂等：已存在则忽略报错）
+_MIGRATIONS = [
+    "ALTER TABLE doc ADD COLUMN publish_time TIMESTAMP",
+    "ALTER TABLE news_analysis ADD COLUMN detail TEXT",
+]
+
+
 def init_schema() -> None:
     """初始化所有表结构。幂等，可重复执行。"""
     schema_sql = (Path(__file__).resolve().parent / "schema.sql").read_text(encoding="utf-8")
     conn = get_conn()
     conn.execute(schema_sql)
+    for ddl in _MIGRATIONS:
+        try:
+            conn.execute(ddl)
+        except Exception:
+            pass
     print(f"[init_schema] 数据库已就绪: {DB_PATH}")
 
 

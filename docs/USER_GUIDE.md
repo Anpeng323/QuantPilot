@@ -26,7 +26,7 @@ bash scripts/run_web.sh --live    # live 模式（读 ~/.quant_env 中的 LLM ke
 - **顶栏**：左为品牌，右为 LLM 状态徽章（🟢 LIVE / 🟡 MOCK）。
 - **侧栏导航**（3 区段）：
   - 数据：📈 全市场快照 / 🔍 个股详情 / 📊 指数看板 / 📐 技术指标 / 📝 SQL 查询
-  - 投研：🤖 AI 分析 / 📚 RAG 知识库 / 💬 提示词库
+  - 投研：🤖 AI 分析 / 📚 RAG 知识库 / 🧪 NL 回测 / 💡 智能问答
   - 持仓：⭐ 自选池 / 💼 持仓 / 🔔 预警 / 📔 笔记
 - **主区域**深色主题（Bloomberg/TradingView 美学）：背景 `#0a0e1a`，上涨红 `#ef232a`，下跌白 `#ffffff`（成交量、MACD 柱均按此着色）。
 

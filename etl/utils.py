@@ -4,6 +4,7 @@ ETL 通用工具：限流、日志、upsert
 from __future__ import annotations
 import time
 import logging
+import contextlib
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -76,6 +77,35 @@ def upsert_df(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame, table: str,
     if log:
         log.info(f"  [{table}] +{added} added, ~{updated} updated")
     return added, updated
+
+
+@contextlib.contextmanager
+def suppressed_indexes(conn: duckdb.DuckDBPyConnection, table: str):
+    """
+    绕开 DuckDB 二级索引在批量 DELETE 时的已知崩溃
+    （Invalid Input Error: Failed to delete all rows from index）。
+
+    进入时卸掉目标表的二级索引（保留主键索引），退出时按原 DDL 重建。
+    用于 daily_kline / minute_kline 等大体量、带二级索引表的批量 upsert 循环外包一层即可。
+    """
+    idxs = conn.execute(
+        f"SELECT index_name, sql FROM duckdb_indexes() "
+        f"WHERE table_name = '{table}' AND is_primary = FALSE"
+    ).fetchall()
+    for name, sql in idxs:
+        try:
+            conn.execute(f'DROP INDEX IF EXISTS "{name}"')
+        except Exception:
+            pass
+    try:
+        yield
+    finally:
+        for name, sql in idxs:
+            if sql:
+                try:
+                    conn.execute(sql)
+                except Exception:
+                    pass
 
 
 def job_runner(job_name: str, table_name: str = "-", log=None):

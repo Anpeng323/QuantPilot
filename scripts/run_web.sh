@@ -1,7 +1,7 @@
 #!/bin/bash
 # 启动 Quant DB Web 控制台
 # 用法:
-#   bash scripts/run_web.sh                # 默认 mock 模式
+#   bash scripts/run_web.sh                # 默认 real 模式（MiniMax）
 #   bash scripts/run_web.sh --live          # 读取 ~/.quant_env 里的 key
 set -e
 cd "$(dirname "$0")/.."
@@ -20,7 +20,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # 处理参数
-MODE="mock"
+MODE="real"
 while [ $# -gt 0 ]; do
   case "$1" in
     --live) MODE="real"
@@ -32,6 +32,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+if [ "$MODE" = "real" ] && [ -z "$LLM_PROVIDER" ]; then
+  export LLM_PROVIDER=minimax
+fi
 if [ "$MODE" = "mock" ]; then
   export LLM_PROVIDER=mock
 fi

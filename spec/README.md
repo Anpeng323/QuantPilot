@@ -26,7 +26,7 @@
 | Phase 1 单元测试 | `tests/backtest/` | T11：单元(`test_signal`/`test_cost`/`test_metrics`/`test_engine`)+接口(`test_api`)共 27 例全绿（含防未来函数 + macd_hist 解析修复 + FastAPI 端到端） | ✅ 已落地 |
 | Phase 1 回归门禁 | `scripts/regression_check.py` [D] | T10：固定场景(`000001`,`ma5>ma20`,2023)跑引擎+基线快照比对（已修 adjust_type 回退与日期格式兼容） | ✅ 已落地 |
 | Phase 2 | `02_Agent_ReAct编排.md` | 模块4（Agent 编排） | 📌 待开发 |
-| Phase 3 | `03_自然语言策略自动回测平台.md` | 模块3.1（重点） | 📌 待开发 |
+| Phase 3 | `03_自然语言策略自动回测平台.md` | 模块3.1（重点） | ✅ 已落地（后端+前端） |
 | Phase 4 | `04_投资建议生成.md` | 模块4（建议生成） | 📌 待开发 |
 | Phase 5 | `05_报告生成增强.md` | 模块6（报告） | 📌 待开发 |
 | Phase 6 | `06_看板与研究卡片预警.md` | 模块5（看板/预警） | 📌 待开发 |

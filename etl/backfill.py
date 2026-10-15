@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import adata
 from etl.db import get_conn
-from etl.utils import get_logger, throttle, upsert_df, job_runner
+from etl.utils import get_logger, throttle, upsert_df, job_runner, suppressed_indexes
 from etl.fetchers import fetch_sina_kline, fetch_sina_finance_index
 
 log = get_logger("backfill")
@@ -84,28 +84,29 @@ def backfill_daily_kline(conn, k_type: int = 1, datalen: int = 1500,
     failed = []
     batch_dfs: list[pd.DataFrame] = []
 
-    for i, code in enumerate(codes, 1):
-        try:
-            df = fetch_one_stock(code, k_type, datalen)
-            if df.empty:
-                continue
-            batch_dfs.append(df)
-            total += len(df)
-        except Exception as e:
-            failed.append((code, str(e)[:80]))
-            log.warning(f"  {code} 失败: {e}")
+    with suppressed_indexes(conn, "daily_kline"):
+        for i, code in enumerate(codes, 1):
+            try:
+                df = fetch_one_stock(code, k_type, datalen)
+                if df.empty:
+                    continue
+                batch_dfs.append(df)
+                total += len(df)
+            except Exception as e:
+                failed.append((code, str(e)[:80]))
+                log.warning(f"  {code} 失败: {e}")
 
-        if len(batch_dfs) >= batch_size:
+            if len(batch_dfs) >= batch_size:
+                upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "daily_kline",
+                          ["stock_code", "trade_date", "k_type", "adjust_type"], log=None)
+                batch_dfs.clear()
+
+            if i % 200 == 0 or i == len(codes):
+                log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  累计 {total:,} 条")
+
+        if batch_dfs:
             upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "daily_kline",
                       ["stock_code", "trade_date", "k_type", "adjust_type"], log=None)
-            batch_dfs.clear()
-
-        if i % 200 == 0 or i == len(codes):
-            log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  累计 {total:,} 条")
-
-    if batch_dfs:
-        upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "daily_kline",
-                  ["stock_code", "trade_date", "k_type", "adjust_type"], log=None)
 
     if failed:
         log.warning(f"失败的股票数: {len(failed)}，前几只：{failed[:5]}")

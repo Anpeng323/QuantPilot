@@ -5,11 +5,31 @@
 """
 from __future__ import annotations
 import os
+import re
 import time
+import threading
 from typing import List, Dict, Any
 from openai import OpenAI  # 顶层 import 确保可用
 
 PROVIDER = os.environ.get("LLM_PROVIDER", "mock").lower()
+
+# 进度回调（线程局部，避免并发请求互相覆盖）。由上层（如流式路由）
+# 设置；chat() 在模型调用前后触发，用于向前端推送「流程进展」。
+_local = threading.local()
+
+
+def set_progress(fn):
+    """注册进度回调 fn(stage: str, label: str)。传 None 取消。"""
+    _local.hook = fn
+
+
+def _emit_stage(stage: str, label: str):
+    hook = getattr(_local, "hook", None)
+    if hook:
+        try:
+            hook(stage, label)
+        except Exception:
+            pass
 
 # ============== Qwen ==============
 QWEN_API_KEY  = os.environ.get("QWEN_API_KEY",  "")
@@ -125,13 +145,51 @@ def _call_mock(messages: List[Dict[str, str]], model: str = "mock") -> Dict[str,
     }
 
 
+_THINK_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.S | re.I)
+
+
+def _strip_think(text: str) -> str:
+    """去掉模型输出的 <think>…</think> 推理块（MiniMax/DeepSeek 等会返回）。
+
+    这类推理块常为英文，且不是用户要看的正文，需在返回前剔除；
+    若被 max_tokens 截断导致标签未闭合，则丢弃从 <think 起的所有内容。
+    """
+    if not text:
+        return text
+    t = _THINK_RE.sub("", text)
+    t = re.sub(r"<think\b[^>]*>.*$", "", t, flags=re.S | re.I)
+    return t.strip()
+
+
+DEFAULT_SYSTEM_PROMPT = (
+    "你是一位严谨的中文投研助手。请严格遵守以下规则：\n"
+    "1) 无论输入使用何种语言，你的全部回答都必须使用简体中文"
+    "（必要的英文专有名词、代码、缩写可保留）。\n"
+    "2) 直接输出最终结论与正文，不要输出思考过程，"
+    "也不要以「Let me analyze…」之类的引导语开场。\n"
+    "3) 严格遵循用户要求的输出格式（Markdown 章节标题、JSON 字段等）。"
+)
+
+
 def chat(messages: List[Dict[str, str]], model: str = None,
          temperature: float = 0.3, max_tokens: int = 2048) -> Dict[str, Any]:
-    """统一调用接口。返回 {text, model, input_tokens, output_tokens, total_tokens}。"""
+    """统一调用接口。返回 {text, model, input_tokens, output_tokens, total_tokens}。
+
+    若调用方未自带 system 消息，则注入 DEFAULT_SYSTEM_PROMPT 强制中文输出。
+    """
+    msgs = list(messages or [])
+    if not any((m or {}).get("role") == "system" for m in msgs):
+        msgs = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}] + msgs
     if _is_live():
-        return _call_live(messages, model=model,
-                          temperature=temperature, max_tokens=max_tokens)
-    return _call_mock(messages)
+        _emit_stage("llm", "🧠 大模型生成分析中（约 30–90 秒，请稍候）…")
+        res = _call_live(msgs, model=model,
+                         temperature=temperature, max_tokens=max_tokens)
+    else:
+        _emit_stage("llm", "🧠 Mock 模式生成中…")
+        res = _call_mock(msgs)
+    res["text"] = _strip_think(res.get("text", ""))
+    _emit_stage("render", "✅ 分析完成，正在整理结果…")
+    return res
 
 
 def estimate_cost(input_tokens: int, output_tokens: int, model: str) -> float:

@@ -8,18 +8,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
-import os, json, uuid
+from fastapi.responses import JSONResponse, StreamingResponse
+import os, json, uuid, queue, threading
 from pathlib import Path
 
 from web.db import get_conn
 from ai import client as llm_client
 from ai import memory as mem
 from ai.analyzers import run as run_analyzer
+from ai.analyzers.comprehensive import run as run_comprehensive
 from ai.analyzers.financial import run as run_financial
 from ai.analyzers.risk import run as run_risk
 from ai.analyzers.valuation import run as run_valuation
 from ai.analyzers.sentiment import run as run_sentiment
+from ai.analyzers.news import (
+    run as run_news_analysis,
+    get_analysis as get_news_analysis,
+    run_for_stock as run_news_for_stock,
+)
 from knowledge import rag_chain
 from knowledge import vector_store as vs
 from knowledge.embedder import warmup, info as emb_info
@@ -240,10 +246,109 @@ def rag_compare(body: dict):
 # =============== 5. AI 分析 ===============
 @router.post("/ai/analyze")
 def ai_analyze(body: dict):
+    # 兼容前端传 analysis_type 与 type 两种字段（此前只读 type，导致类型选择不生效）
     return run_analyzer(
         stock_code=body.get("stock_code", ""),
-        analysis_type=body.get("type", "financial"),
+        analysis_type=body.get("type") or body.get("analysis_type") or "financial",
         stock_codes=body.get("stock_codes"),
+    )
+
+
+@router.post("/ai/analyze/stream")
+def ai_analyze_stream(body: dict):
+    """流式 AI 分析：以 SSE 推送流程进展，避免前端干等。
+
+    事件流：
+      event: stage    data: {"stage": "prepare"|"llm"|"render", "label": str, "pct": int}
+      event: result   data: {<run_analyzer 的完整返回>}
+      event: error    data: {"message": str}
+    """
+    q: "queue.Queue" = queue.Queue()
+
+    def on_progress(stage: str, label: str):
+        pct = {"prepare": 20, "llm": 70, "render": 95}.get(stage, 50)
+        q.put({"event": "stage", "data": {"stage": stage, "label": label, "pct": pct}})
+
+    def worker():
+        try:
+            llm_client.set_progress(on_progress)
+            on_progress("prepare", "📊 正在读取财务 / 行情 / 因子数据 …")
+            result = run_analyzer(
+                stock_code=body.get("stock_code", ""),
+                analysis_type=body.get("type") or body.get("analysis_type") or "financial",
+                stock_codes=body.get("stock_codes"),
+            )
+            q.put({"event": "result", "data": result})
+        except Exception as e:  # 异常也推给前端
+            q.put({"event": "error", "data": {"message": str(e)}})
+        finally:
+            llm_client.set_progress(None)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def gen():
+        while True:
+            item = q.get()
+            ev = item["event"]
+            yield f"event: {ev}\ndata: {json.dumps(item['data'], ensure_ascii=False, default=str)}\n\n"
+            if ev in ("result", "error"):
+                break
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# =============== 5b. 综合投研报告（统一，不区分类型） ===============
+@router.post("/ai/analyze/comprehensive/stream")
+def ai_analyze_comprehensive_stream(body: dict):
+    """流式综合报告：SSE 推送「准备→检索→撰写→整理」全过程，并检索内外部资料。
+
+    事件流同 /ai/analyze/stream：
+      event: stage    data: {"stage": str, "label": str, "pct": int}
+      event: result   data: {<comprehensive.run 返回>}
+      event: error    data: {"message": str}
+    """
+    q: "queue.Queue" = queue.Queue()
+    code = body.get("stock_code", "")
+
+    def on_stage(stage: str, label: str, pct: int):
+        q.put({"event": "stage", "data": {"stage": stage, "label": label, "pct": pct}})
+
+    def worker():
+        try:
+            result = run_comprehensive(code, save=True, on_stage=on_stage)
+            q.put({"event": "result", "data": result})
+        except Exception as e:
+            q.put({"event": "error", "data": {"message": str(e)}})
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def gen():
+        while True:
+            item = q.get()
+            ev = item["event"]
+            yield f"event: {ev}\ndata: {json.dumps(item['data'], ensure_ascii=False, default=str)}\n\n"
+            if ev in ("result", "error"):
+                break
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# =============== 4. 投研智能问答 Agent（ReAct 编排） ===============
+@router.post("/agent/ask")
+def agent_ask(body: dict):
+    from ai.agent import ask
+    return ask(
+        question=body.get("question", ""),
+        stock_code=body.get("stock_code"),
+        history=body.get("history"),
     )
 
 
@@ -359,9 +464,57 @@ def ingest_news(body: dict):
     )
 
 
+@router.post("/ingest/news/crawl")
+def ingest_news_crawl(body: dict = None):
+    """手动触发聚合抓取（多来源）。body: {sources?: list[str], limit?: int, stock_code?: str}"""
+    body = body or {}
+    sources = body.get("sources") or None
+    if isinstance(sources, str):
+        sources = [s.strip() for s in sources.split(",") if s.strip()] or None
+    limit = int(body.get("limit", 100))
+    stock_code = body.get("stock_code", "")
+    return di_news.run(limit=limit, stock_code=stock_code, sources=sources)
+
+
 @router.get("/ingest/news")
-def ingest_news_list(limit: int = 30):
-    return di_news.list_news(limit=limit)
+def ingest_news_list(limit: int = 30, source: str = "", tag: str = "",
+                     stock_code: str = "", q: str = "", page: int = 1):
+    """新闻聚合列表（多维度筛选 + 分页）。"""
+    return di_news.list_news(limit=limit, stock_code=stock_code, source=source,
+                             tag=tag, q=q, page=page)
+
+
+@router.get("/stock/{code}/news")
+def stock_news(code: str, limit: int = 30, page: int = 1):
+    """个股相关新闻（新闻聚合看板的个股关联）。"""
+    return di_news.list_news(limit=limit, stock_code=code, page=page)
+
+
+@router.post("/news/analyze")
+def news_analyze(body: dict):
+    """对单条新闻做 AI 分析（情绪/摘要/要点/影响/风险/关注点）。
+
+    body: {doc_id: str, force?: bool}；force=True 时忽略缓存强制重算。
+    """
+    doc_id = body.get("doc_id", "")
+    if not doc_id:
+        return JSONResponse(status_code=400, content={"error": "doc_id 必填"})
+    return run_news_analysis(doc_id, save=True, force=bool(body.get("force", False)))
+
+
+@router.get("/news/analyze/stock/{code}")
+def news_analyze_stock(code: str):
+    """批量分析某股票全部新闻并汇总情绪分布。"""
+    return run_news_for_stock(code)
+
+
+@router.get("/news/analysis/{doc_id}")
+def news_analysis_get(doc_id: str):
+    """读取已缓存的新闻 AI 分析。"""
+    res = get_news_analysis(doc_id)
+    if not res:
+        return JSONResponse(status_code=404, content={"error": "尚未分析或不存在"})
+    return res
 
 
 @router.get("/ingest/announcements")

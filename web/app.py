@@ -285,6 +285,118 @@ def create_app() -> FastAPI:
         """
         return web_db.query_dict(sql, params=[code, start, latest], limit=weeks)
 
+    # ---------- 个股因子（factors_daily 宽表，按日倒序） ----------
+    @app.get("/api/stock/factors")
+    def stock_factors(code: str = Query(...), days: int = Query(60, ge=1, le=500)):
+        sql = """
+            SELECT trade_date, close, mom_5d, mom_10d, mom_20d, mom_60d,
+                   vol_20d, vol_60d, volume_ratio_20d, amount_ratio_20d,
+                   price_position_20d, bias_ma5, bias_ma20, bias_ma60
+            FROM factors_daily
+            WHERE stock_code = ?
+            ORDER BY trade_date DESC
+            LIMIT ?
+        """
+        out = web_db.query_dict(sql, params=[code, days], limit=days)
+        if "error" in out:
+            return {"columns": [], "rows": [], "row_count": 0,
+                    "message": "暂无因子数据（可运行 analysis/factors.py 生成 factors_daily）"}
+        for r in out["rows"]:
+            r["trade_date"] = str(r["trade_date"])
+        if not out["rows"]:
+            out["message"] = "该股票暂无因子数据"
+        return out
+
+    # ---------- 个股概览（基础信息 + 最新行情 + 区间统计 + 估值/行业/因子快照） ----------
+    @app.get("/api/stock/overview")
+    def stock_overview(code: str = Query(...)):
+        conn = web_db.get_conn()
+        basic = conn.execute(
+            "SELECT stock_code, short_name, exchange, list_date FROM stock_basic WHERE stock_code = ?",
+            [code],
+        ).fetchone()
+        if not basic:
+            return {"error": f"未找到股票 {code}"}
+
+        def _has_table(tbl: str) -> bool:
+            return conn.execute(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", [tbl]
+            ).fetchone()[0] > 0
+
+        # 最新行情
+        q = conn.execute(
+            "SELECT trade_date, open, high, low, close, pre_close, change, change_pct, "
+            "       volume, amount, turnover_ratio "
+            "FROM daily_kline WHERE stock_code=? AND k_type=1 "
+            "ORDER BY trade_date DESC LIMIT 1", [code],
+        ).fetchone()
+        quote = None
+        if q:
+            quote = {
+                "trade_date": str(q[0]), "open": q[1], "high": q[2], "low": q[3],
+                "close": q[4], "pre_close": q[5], "change": q[6],
+                "change_pct": round(q[7], 2) if q[7] is not None else None,
+                "volume": q[8], "amount": q[9], "turnover_ratio": q[10],
+            }
+
+        # 近 250 日区间统计
+        st = conn.execute(
+            "SELECT COUNT(*), MIN(low), MAX(high), AVG(volume), AVG(amount) FROM ("
+            "  SELECT low, high, volume, amount FROM daily_kline "
+            "  WHERE stock_code=? AND k_type=1 ORDER BY trade_date DESC LIMIT 250)", [code],
+        ).fetchone()
+        stats = {"bars": st[0], "low": st[1], "high": st[2],
+                 "avg_volume": st[3], "avg_amount": st[4]}
+
+        # 估值 / 财务（finance_core，可能无覆盖）
+        valuation = None
+        if _has_table("finance_core"):
+            fin = conn.execute(
+                "SELECT report_date, pe, pb, ps, roe, eps, total_market_cap, "
+                "       revenue, net_profit, yoy_revenue, yoy_profit "
+                "FROM finance_core WHERE stock_code=? ORDER BY report_date DESC LIMIT 1", [code],
+            ).fetchone()
+            if fin:
+                valuation = {
+                    "report_date": str(fin[0]), "pe": fin[1], "pb": fin[2], "ps": fin[3],
+                    "roe": fin[4], "eps": fin[5], "total_market_cap": fin[6],
+                    "revenue": fin[7], "net_profit": fin[8],
+                    "yoy_revenue": fin[9], "yoy_profit": fin[10],
+                }
+
+        # 所属行业（stock_industry，可能无覆盖）
+        industries: list = []
+        if _has_table("stock_industry"):
+            industries = [
+                {"sw_code": r[0], "industry_name": r[1], "industry_type": r[2]}
+                for r in conn.execute(
+                    "SELECT sw_code, industry_name, industry_type FROM stock_industry "
+                    "WHERE stock_code=? ORDER BY industry_type", [code]).fetchall()
+            ]
+
+        # 最新因子快照（factors_daily）
+        factors = None
+        if _has_table("factors_daily"):
+            fr = conn.execute(
+                "SELECT trade_date, mom_5d, mom_20d, mom_60d, vol_20d, "
+                "       volume_ratio_20d, price_position_20d, bias_ma5, bias_ma20, bias_ma60 "
+                "FROM factors_daily WHERE stock_code=? ORDER BY trade_date DESC LIMIT 1", [code],
+            ).fetchone()
+            if fr:
+                factors = {
+                    "trade_date": str(fr[0]), "mom_5d": fr[1], "mom_20d": fr[2],
+                    "mom_60d": fr[3], "vol_20d": fr[4], "volume_ratio_20d": fr[5],
+                    "price_position_20d": fr[6], "bias_ma5": fr[7],
+                    "bias_ma20": fr[8], "bias_ma60": fr[9],
+                }
+
+        return {
+            "stock_code": basic[0], "short_name": basic[1], "exchange": basic[2],
+            "list_date": str(basic[3]) if basic[3] else None,
+            "quote": quote, "stats": stats,
+            "valuation": valuation, "industries": industries, "factors": factors,
+        }
+
     # ---------- 个股分时（5 分钟 K 线，默认取最新交易日） ----------
     @app.get("/api/stock/minute")
     def stock_minute(

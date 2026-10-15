@@ -25,12 +25,13 @@ def compute_metrics(equity: list[float], benchmark: list[float | None] | None,
     years = n / 252.0
     annual_return = (1.0 + total_return) ** (1.0 / years) - 1.0 if years > 0 else 0.0
 
-    # 日收益序列
+    # 日收益序列（夏普按超额收益口径：扣掉无风险利率）
     rets = [equity[i] / equity[i - 1] - 1.0 for i in range(1, n)]
     mean = sum(rets) / len(rets)
     var = sum((r - mean) ** 2 for r in rets) / len(rets)
     std = math.sqrt(var) if var > 0 else 0.0
-    sharpe = (mean / std) * math.sqrt(252.0) if std > 0 else 0.0
+    excess_daily = mean - rf / 252.0
+    sharpe = (excess_daily / std) * math.sqrt(252.0) if std > 0 else 0.0
 
     # 最大回撤
     peak = equity[0]

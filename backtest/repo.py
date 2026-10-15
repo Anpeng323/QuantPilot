@@ -144,3 +144,70 @@ def get_task(task_id: str) -> dict | None:
         "trades": data["trades"], "equity_curve": data["equity_curve"],
         "metrics": data["metrics"], "data_flag": data["data_flag"],
     }
+
+
+def save_strategy_record(name: str, source: str, definition: str,
+                         code_hash: str, metrics: dict) -> tuple[str, bool]:
+    """保存一条策略记录（NL 或规则）。按 code_hash 去重：若已存在返回 (已有id, True)。
+
+    返回 (strategy_id, duplicate)。
+    """
+    _ensure()
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT strategy_id FROM strategy_record WHERE code_hash = ?", [code_hash]
+        ).fetchone()
+        if row:
+            return row[0], True
+        sid = "st_" + uuid.uuid4().hex[:12]
+        conn.execute(
+            "INSERT INTO strategy_record"
+            "(strategy_id, name, source, definition, code_hash, metrics_json) "
+            "VALUES (?,?,?,?,?,?)",
+            [sid, name, source, definition, code_hash,
+             json.dumps(metrics, ensure_ascii=False)],
+        )
+    finally:
+        conn.close()
+    return sid, False
+
+
+def list_strategies(limit: int = 50) -> list[dict]:
+    _ensure()
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT strategy_id, name, source, code_hash, created_at "
+            "FROM strategy_record ORDER BY created_at DESC LIMIT ?",
+            [limit],
+        ).fetchall()
+    finally:
+        conn.close()
+    cols = ["strategy_id", "name", "source", "code_hash", "created_at"]
+    return [
+        {c: (str(r[i]) if c == "created_at" else r[i]) for i, c in enumerate(cols)}
+        for r in rows
+    ]
+
+
+def get_strategy(strategy_id: str) -> dict | None:
+    _ensure()
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT strategy_id, name, source, definition, code_hash, metrics_json, created_at "
+            "FROM strategy_record WHERE strategy_id = ?",
+            [strategy_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    (sid, name, source, definition, code_hash, metrics_json, created) = row
+    return {
+        "strategy_id": sid, "name": name, "source": source,
+        "definition": definition, "code_hash": code_hash,
+        "metrics": json.loads(metrics_json) if metrics_json else None,
+        "created_at": str(created),
+    }

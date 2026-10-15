@@ -22,7 +22,12 @@ def _recent_trade_dates(n: int, end: str = None) -> list:
         "AND trade_date<=? ORDER BY trade_date DESC LIMIT ?",
         [end, n],
     ).fetchall()
-    return [r[0].replace("-", "") for r in reversed(rows)]
+    dates = []
+    for r in reversed(rows):
+        d = r[0]
+        # DuckDB 的 DATE 列返回 datetime.date，用 strftime 转 YYYYMMDD；兜底处理字符串
+        dates.append(d.strftime("%Y%m%d") if hasattr(d, "strftime") else str(d).replace("-", ""))
+    return dates
 
 
 def fetch_date(date_str: str) -> list:
