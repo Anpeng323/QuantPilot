@@ -1,4 +1,5 @@
 from . import financial, risk, valuation, sentiment, industry, macro, comparative, dcf, profit, comprehensive
+from ai.structured import attach_disclaimer
 
 DISPATCH = {
     "financial": financial.run,
@@ -27,5 +28,11 @@ def run(stock_code: str, analysis_type: str, save: bool = True,
     if not fn:
         return {"error": f"未知分析类型 {analysis_type}"}
     if stock_codes is not None:
-        return fn(stock_code, save=save, stock_codes=stock_codes)
-    return fn(stock_code, save=save)
+        result = fn(stock_code, save=save, stock_codes=stock_codes)
+    else:
+        result = fn(stock_code, save=save)
+    # 最外层统一注入 §6.5 免责声明（仅一次），保证所有分析输出均含合规声明
+    if isinstance(result, dict) and "response" in result and not result.get("error"):
+        result["response"] = attach_disclaimer(result["response"])
+        result["disclaimer"] = True
+    return result

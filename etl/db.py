@@ -19,6 +19,30 @@ def get_conn(read_only: bool = False) -> duckdb.DuckDBPyConnection:
 _MIGRATIONS = [
     "ALTER TABLE doc ADD COLUMN publish_time TIMESTAMP",
     "ALTER TABLE news_analysis ADD COLUMN detail TEXT",
+    """CREATE TABLE IF NOT EXISTS agent_session (
+        session_id VARCHAR PRIMARY KEY,
+        question VARCHAR,
+        answer VARCHAR,
+        citations_json VARCHAR,
+        confidence DOUBLE,
+        investment_view BOOLEAN,
+        model_used VARCHAR,
+        created_at TIMESTAMP DEFAULT current_timestamp
+    )""",
+    """CREATE TABLE IF NOT EXISTS screener_result (
+        task_id VARCHAR PRIMARY KEY,
+        nl VARCHAR,
+        params_json VARCHAR,
+        generated_code VARCHAR,
+        matches_json VARCHAR,
+        status VARCHAR,
+        error VARCHAR,
+        citations_json VARCHAR,
+        confidence DOUBLE,
+        created_at TIMESTAMP DEFAULT current_timestamp
+    )""",
+    "ALTER TABLE screener_result ADD COLUMN citations_json VARCHAR",
+    "ALTER TABLE screener_result ADD COLUMN confidence DOUBLE",
 ]
 
 

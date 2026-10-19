@@ -5,9 +5,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from jinja2 import Template
 from etl.db import get_conn
-from ai import client as llm
 from ai.prompts import PROMPT_MACRO
-from ai.analyzers.base import save_analysis
+from ai import router
+from ai.structured import run_simple
 
 
 def _series(indicator: str, n: int = 4):
@@ -51,12 +51,5 @@ def run(stock_code: str = "", save: bool = True) -> dict:
     ctx = build_context()
     tpl = Template(PROMPT_MACRO)
     prompt = tpl.render(macro_context=ctx)
-    t0 = __import__("time").time()
-    resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=1600)
-    dur = int((__import__("time").time() - t0) * 1000)
-    cost = llm.estimate_cost(resp["input_tokens"], resp["output_tokens"], resp["model"])
-    aid = save_analysis("MACRO", "macro", prompt, resp["text"],
-                        resp["model"], resp["total_tokens"], cost, dur) if save else None
-    return {"analysis_id": aid, "stock_code": stock_code or "MACRO", "type": "macro",
-            "response": resp["text"], "model": resp["model"],
-            "tokens": resp["total_tokens"], "cost_cny": cost, "duration_ms": dur}
+    return run_simple(router.TASK_MACRO, "MACRO", prompt, save,
+                      temperature=0.3, max_tokens=1600, atype="macro")

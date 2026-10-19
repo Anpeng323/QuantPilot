@@ -378,12 +378,51 @@ def _latest_trade_date():
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
+def _bt_citations(stock_code: str, start: str, end: str, benchmark: Optional[str]) -> List[Dict[str, str]]:
+    """回测结果来源标注：行情区间 + 对标基准（如有）。"""
+    cites: List[Dict[str, str]] = [{
+        "type": "data",
+        "ref": "daily_kline",
+        "label": f"交易所日行情（daily_kline，{start}~{end}）",
+        "date": end,
+    }]
+    if benchmark:
+        cites.append({
+            "type": "data",
+            "ref": "index_kline",
+            "label": f"对标基准行情（{benchmark}）",
+            "date": end,
+        })
+    return cites
+
+
+def _bt_confidence(df, benchmark: Optional[str], executed: bool) -> float:
+    """回测置信度（0-1，确定性推导，不额外调 LLM）：由数据覆盖度决定。
+
+    - 有行情即 0.5 起；覆盖 >=1 年(250 日) +0.3，>=0.5 年(120 日) +0.2；
+    - 启用基准对标再 +0.2。无执行/数据不足取最低 0.3。
+    """
+    if not executed or df is None or len(df) < 2:
+        return 0.3
+    n = len(df)
+    base = 0.5
+    if n >= 250:
+        base += 0.3
+    elif n >= 120:
+        base += 0.2
+    if benchmark:
+        base += 0.2
+    return round(min(0.99, base), 2)
+
+
 def _err(generated_code, ast_passed, error, **extra) -> Dict[str, Any]:
     out = {
         "generated_code": generated_code,
         "ast_passed": ast_passed,
         "executed": False,
         "error": error,
+        "citations": [],
+        "confidence": 0.3,
         "disclaimer": True,
     }
     out.update(extra)
@@ -424,18 +463,27 @@ def run_nl_backtest(
                     "无法从描述中识别出可用指标。请换用更明确的描述，例如「5日均线上穿20日均线买入，下穿卖出」"
                     "或「MACD金叉买入、死叉卖出」。当前离线（启发式）模式仅支持均线/RSI/MACD/成交量等明确写法。")
 
-    # 3) AST 白名单校验
+    # 3~6) AST 校验 → 沙箱执行 → 回测引擎 → 落库 → 组装结果
+    return _run_code(df, code, stock_code, start, end, initial_cash,
+                     fill_price, cost, benchmark, save, name)
+
+
+def _run_code(df, code, stock_code, start, end, initial_cash=100000.0,
+              fill_price="close", cost=None, benchmark=None, save=False,
+              name=None) -> Dict[str, Any]:
+    """沙箱执行给定策略代码并跑回测引擎（NL 生成与「用代码重跑」共用）。"""
+    # AST 白名单校验
     ok, reason, suggestions = validate_code_ast(code)
     if not ok:
         return _err(code, False, reason, suggestions=suggestions)
 
-    # 4) 沙箱执行（算出布尔信号）
+    # 沙箱执行（算出布尔信号）
     try:
         signal_list, _logs = execute_signal(code, df)
     except SandboxError as e:
         return _err(code, True, str(e), sandbox_kind=e.kind)
 
-    # 5) 回测引擎跑绩效（复用 Phase 1，防未来函数一致）
+    # 回测引擎跑绩效（复用 Phase 1，防未来函数一致）
     req = BacktestRequest(
         stock_code=stock_code, start=start, end=end, signal="",
         initial_cash=initial_cash, fill_price=fill_price,
@@ -446,7 +494,7 @@ def run_nl_backtest(
     except (BacktestError, SignalParseError) as e:
         return _err(code, True, str(e), executed=True)
 
-    # 6) 落库（可选）
+    # 落库（可选）
     strategy_id = None
     duplicate = False
     if save:
@@ -456,7 +504,7 @@ def run_nl_backtest(
             f"{code}|{stock_code}|{start}|{end}".encode("utf-8")
         ).hexdigest()
         strategy_id, duplicate = repo.save_strategy_record(
-            name=name or (nl[:20]),
+            name=name or (code[:20]),
             source="nl",
             definition=code,
             code_hash=code_hash,
@@ -465,7 +513,7 @@ def run_nl_backtest(
 
     kline = _build_kline(df)
     indicators = _build_indicators(df, code)
-    rules = _build_rules(code, nl)
+    rules = _build_rules(code, "")
 
     return {
         "generated_code": code,
@@ -493,8 +541,28 @@ def run_nl_backtest(
         "strategy_id": strategy_id,
         "duplicate": duplicate,
         "review_url": f"/strategy/{strategy_id}" if strategy_id else None,
+        "citations": _bt_citations(stock_code, start, end, benchmark),
+        "confidence": _bt_confidence(df, benchmark, True),
         "disclaimer": True,
     }
+
+
+def run_backtest_with_code(
+    stock_code: str, code: str, days: Optional[int] = None,
+    initial_cash: float = 100000.0, fill_price: str = "close",
+    cost: Optional[CostConfig] = None, benchmark: Optional[str] = None,
+    save: bool = False, name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """直接用用户提供（可编辑）的 Python 策略代码跑回测（跳过 LLM 生成）。"""
+    if not (stock_code and code and code.strip()):
+        return _err(None, False, "需要提供股票代码与策略代码")
+    end, start = resolve_default_range(days)
+    df = load_kline(stock_code, start, end)
+    if df is None or df.empty or len(df) < 2:
+        return _err(None, False,
+                    f"该股票（{stock_code}）在区间 {start}~{end} 内无行情数据，请检查代码或区间")
+    return _run_code(df, code, stock_code, start, end, initial_cash,
+                     fill_price, cost, benchmark, save, name)
 
 
 def _build_kline(df) -> list:

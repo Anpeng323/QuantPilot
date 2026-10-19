@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from ai import client as llm
 from ai.agent import tools as tool_reg
 from ai.agent import intent, compliance
+from ai import router
 
 MAX_STEPS = 6
 REASON_MODEL = "MiniMax-M3"  # 推理用最强模型
@@ -242,11 +243,11 @@ HUMANIZE_PROMPT = (
 def _humanize(raw: str, question: str) -> str:
     """把结构化原始数据改写成自然语言中文（失败则返回空串）。"""
     try:
-        resp = llm.chat([
+        resp = router.chat_for_task(router.TASK_COMPREHENSIVE, [
             {"role": "system", "content": HUMANIZE_PROMPT},
             {"role": "user", "content":
                 f"用户问题：{question}\n\n需要改写成自然语言的原始数据：\n{str(raw)[:2500]}"},
-        ], model=REASON_MODEL, temperature=0.3, max_tokens=1200)
+        ], temperature=0.3, max_tokens=1200)
         out = (resp.get("text") or "").strip()
     except Exception:
         out = ""
@@ -280,7 +281,7 @@ def _chitchat(question: str, history: List[Dict] = None) -> Dict[str, Any]:
     messages.append({"role": "user", "content": question})
     answer = ""
     try:
-        resp = llm.chat(messages, model=REASON_MODEL, temperature=0.4, max_tokens=600)
+        resp = router.chat_for_task(router.TASK_COMPREHENSIVE, messages, temperature=0.4, max_tokens=600)
         answer = (resp.get("text") or "").strip()
     except Exception:
         answer = ""
@@ -348,7 +349,7 @@ def _synthesize(question: str, history: List[Dict], steps: List[Dict],
             messages.append({"role": h["role"], "content": str(h["content"])})
     messages.append({"role": "user", "content": prompt})
     try:
-        resp = llm.chat(messages, model=REASON_MODEL, temperature=0.3, max_tokens=3000)
+        resp = router.chat_for_task(router.TASK_COMPREHENSIVE, messages, temperature=0.3, max_tokens=3000)
         return (resp.get("text") or "").strip()
     except Exception:
         return ""
@@ -410,7 +411,7 @@ def ask(question: str, stock_code: str = None, history: List[Dict] = None,
 
     for _ in range(max_steps):
         try:
-            resp = llm.chat(messages, model=REASON_MODEL, temperature=0.2, max_tokens=3000)
+            resp = router.chat_for_task(router.TASK_COMPREHENSIVE, messages, temperature=0.2, max_tokens=3000)
         except Exception:
             return _fail("大模型调用失败，请稍后重试")
         text = resp.get("text", "")
@@ -520,10 +521,23 @@ def ask(question: str, stock_code: str = None, history: List[Dict] = None,
     # 最后一道保障：把「原始数据当答案」的回复改写成人类语言
     answer = _ensure_natural_language(answer or "", question)
     comp = compliance.enforce(answer or "")
+
+    # 置信度：由已取数工具的覆盖度确定性推导（不额外调 LLM）
+    confidence = _agent_confidence(steps, sources, degraded)
+
+    # 来源标注：把 sources（doc_id 列表）结构化为 citations
+    citations = [{"type": "doc", "ref": s.get("doc_id") or s.get("chunk_id") or "",
+                  "label": s.get("doc_id") or "知识库文档",
+                  "page": s.get("page"), "date": ""} for s in sources]
+
     return {
         "answer": comp["text"],
         "steps": steps,
         "sources": sources,
+        "citations": citations,
+        "confidence": confidence,
+        "investment_view": comp.get("investment_view", False),
+        "compliance_note": comp.get("note", ""),
         "cards": cards,
         "disclaimer": True,
         "intent": intent_name,
@@ -531,6 +545,26 @@ def ask(question: str, stock_code: str = None, history: List[Dict] = None,
         "model": REASON_MODEL,
         "suggestions": _suggest_followups(_suggest_codes(codes, history), intent_name),
     }
+
+
+def _agent_confidence(steps: List[Dict], sources: List[Dict], degraded: bool) -> float:
+    """Agent 置信度（0-1）：基于工具覆盖度确定性推导。
+
+    - 降级/无工具调用 → 0.3
+    - 每调用一类有效数据工具 +0.1（封顶 0.95）；有知识库来源再 +0.1。
+    """
+    if degraded or not steps:
+        return 0.3
+    tool_kinds = {s.get("action", {}).get("tool") for s in steps
+                  if isinstance(s, dict) and not s.get("observation", {}).get("error")}
+    # 取数类工具权重更高
+    data_tools = {"get_quote", "get_financials", "get_research_reports",
+                  "get_announcements", "get_industry", "get_macro",
+                  "suggest_investment", "rag_retrieve"}
+    base = 0.5 + 0.1 * min(len(tool_kinds & data_tools), 4)
+    if sources:
+        base += 0.1
+    return round(min(0.95, base), 2)
 
 
 def _suggest_codes(codes: List[str], history: List[Dict]) -> List[str]:

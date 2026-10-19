@@ -210,11 +210,14 @@ def rag_docs_list(stock_code: str = "", limit: int = 100):
     sql += " ORDER BY ingested_at DESC LIMIT ?"
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
-    return [{
+    from etl.industry import enrich_with_board
+    items = [{
         "doc_id": r[0], "doc_type": r[1], "source": r[2], "stock_code": r[3],
         "title": r[4], "publish_date": str(r[5]) if r[5] else "",
         "file_path": r[6], "chunk_count": r[7], "ingested_at": str(r[8]),
     } for r in rows]
+    enrich_with_board(items)
+    return items
 
 
 @router.delete("/rag/docs/{doc_id}")
@@ -345,11 +348,28 @@ def ai_analyze_comprehensive_stream(body: dict):
 @router.post("/agent/ask")
 def agent_ask(body: dict):
     from ai.agent import ask
-    return ask(
-        question=body.get("question", ""),
+    import uuid as _uuid
+    import json as _json
+    question = body.get("question", "")
+    result = ask(
+        question=question,
         stock_code=body.get("stock_code"),
         history=body.get("history"),
     )
+    # 持久化对话历史（便于回看与审计），失败不影响返回
+    try:
+        conn = get_conn()
+        conn.execute(
+            "INSERT INTO agent_session (session_id, question, answer, citations_json, "
+            "confidence, investment_view, model_used) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [_uuid.uuid4().hex[:16], question[:2000], (result.get("answer") or "")[:8000],
+             _json.dumps(result.get("citations", []), ensure_ascii=False),
+             result.get("confidence"), bool(result.get("investment_view")),
+             result.get("model", "")],
+        )
+    except Exception:
+        pass
+    return result
 
 
 @router.get("/ai/history")

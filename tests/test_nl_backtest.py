@@ -54,7 +54,14 @@ def test_nl_matches_dsl():
     dsl_df = load_kline(STOCK, START, END)
     dsl = run_backtest_df(dsl_df, _req(signal="ma5 > ma20"))
     assert res["metrics"] == dsl["metrics"], "NL 与 DSL 绩效应完全一致"
-    assert res["trades"] == dsl["trades"]
+
+    # 交易层面：引擎核心字段必须逐笔一致（NL 会在核心字段之外附加
+    # decide_date / indicator_values / rule_* 等可追溯归因字段，属正常专业化增强，
+    # 故只比较引擎产出字段，避免断言随增强字段漂移）。
+    CORE_KEYS = ("date", "side", "price", "quantity", "amount", "fee", "pnl")
+    _core = lambda t: {k: t.get(k) for k in CORE_KEYS}
+    assert [_core(t) for t in res["trades"]] == [_core(t) for t in dsl["trades"]], \
+        "NL 与 DSL 交易核心字段应完全一致（防未来函数 / 策略逻辑偏移）"
 
 
 # ---------------------------------------------------------------------------

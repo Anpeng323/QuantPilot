@@ -1,5 +1,9 @@
-# 大数据文件（2.4GB），不入库，改动前自行 cp 快照
-data/*.duckdb
+# 运行时数据（本地生成，不入库）
+data/*
+!data/.gitkeep
+
+# 测试缓存
+.pytest_cache/
 
 # 虚拟环境
 .venv/
@@ -19,6 +23,4 @@ __pycache__/
 
 # 内部数据 / 生成产物（不入库，便于纯净版本回退）
 .codebuddy/
-data/chroma/
-data/exports/
 

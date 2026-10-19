@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ai import client as llm
 from ai.analyzers.base import stock_basic, save_analysis
 from ai.agent import tools as tool_reg
+from ai import router
 
 # 报告模式可用的工具（白名单子集：覆盖内部数据 + 外部资料）。
 # 注意：仅放「纯取数」工具；compare_stocks / suggest_investment 内部会再调一次 LLM，
@@ -204,6 +205,8 @@ def run(stock_code: str, save: bool = True,
         return {"error": f"找不到股票 {stock_code}"}
     code = info["stock_code"]
     name = info["short_name"]
+    total_tokens = 0
+    total_cost = 0.0
 
     if on_stage:
         on_stage("prepare", f"📊 已识别 {code} {name}，开始收集基础数据…", 8)
@@ -224,7 +227,11 @@ def run(stock_code: str, save: bool = True,
             on_stage("think",
                      f"🧠 第 {i+1}/{MAX_STEPS} 步：梳理已收集资料，决定下一步…", 30 + i * 7)
         try:
-            resp = llm.chat(messages, temperature=0.2, max_tokens=4000)
+            resp = router.chat_for_task(router.TASK_COMPREHENSIVE, messages,
+                                       temperature=0.2, max_tokens=4000)
+            total_tokens += resp.get("total_tokens", 0)
+            total_cost += llm.estimate_cost(resp.get("input_tokens", 0),
+                                            resp.get("output_tokens", 0), resp.get("model", ""))
         except Exception as e:
             return {"error": f"大模型调用失败: {e}", "stock_code": code, "type": "comprehensive"}
         last_model = resp.get("model", last_model)
@@ -292,8 +299,12 @@ def run(stock_code: str, save: bool = True,
         )
         for _ in range(2):  # 失败重试 1 次，规避大模型瞬时错误
             try:
-                resp = llm.chat([{"role": "user", "content": synth_prompt}],
-                                temperature=0.3, max_tokens=4000)
+                resp = router.chat_for_task(router.TASK_COMPREHENSIVE,
+                                            [{"role": "user", "content": synth_prompt}],
+                                            temperature=0.3, max_tokens=4000)
+                total_tokens += resp.get("total_tokens", 0)
+                total_cost += llm.estimate_cost(resp.get("input_tokens", 0),
+                                                resp.get("output_tokens", 0), resp.get("model", ""))
                 last_model = resp.get("model", last_model)
                 body = _strip_refs(resp.get("text", ""))
                 if body.strip():
@@ -323,11 +334,18 @@ def run(stock_code: str, save: bool = True,
     if on_stage:
         on_stage("render", "✅ 综合报告生成完成，正在整理呈现…", 100)
 
+    from ai.structured import compute_confidence
+    citations = [{"type": "doc", "ref": e[:60], "label": e, "date": ""} for e in registry]
+    confidence = compute_confidence(code)
+
     aid = None
     if save:
         try:
             aid = save_analysis(code, "comprehensive", REPORT_SYSTEM_PROMPT,
-                                answer, last_model, 0, 0.0, 0)
+                                answer, last_model, total_tokens, total_cost, 0,
+                                citations=[c["label"] for c in citations],
+                                confidence=confidence,
+                                citations_obj=citations)
         except Exception:
             aid = None
 
@@ -339,7 +357,11 @@ def run(stock_code: str, save: bool = True,
         "model": last_model,
         "degraded": degraded,
         "steps": len(steps),
-        "tokens": 0,
-        "cost_cny": 0.0,
+        "citations": citations,
+        "score": None,
+        "confidence": confidence,
+        "disclaimer": True,
+        "tokens": total_tokens,
+        "cost_cny": total_cost,
         "duration_ms": 0,
     }

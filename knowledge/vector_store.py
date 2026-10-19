@@ -96,6 +96,7 @@ def query(query_embedding: List[float], top_k: int = 10,
         results.append({
             "chunk_id": chunk_id,
             "doc_id": meta.get("doc_id", ""),
+            "doc_type": meta.get("doc_type", ""),
             "page": meta.get("page", 0),
             "section": meta.get("section", ""),
             "stock_code": meta.get("stock_code", ""),
@@ -107,6 +108,23 @@ def query(query_embedding: List[float], top_k: int = 10,
 
 def count() -> int:
     return get_collection().count()
+
+
+def reset() -> bool:
+    """清空向量库（删除默认 collection，重建空库）。"""
+    global _collection, _client
+    try:
+        c = get_client()
+        try:
+            c.delete_collection(COLLECTION_DEFAULT)
+        except Exception:
+            pass
+        _collection = None
+        get_collection()
+        return True
+    except Exception as e:
+        print(f"[vector_store] reset 失败: {e}")
+        return False
 
 
 def info() -> Dict[str, Any]:

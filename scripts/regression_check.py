@@ -23,6 +23,9 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# 让 scripts/ 下可直接 import 项目模块（backtest / ai / etl 等）
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 DB = ROOT / "data" / "quant.duckdb"
 APP_JS = ROOT / "web" / "static" / "app.js"
 
@@ -246,6 +249,80 @@ def check_backtest():
         ok("回测层：关键指标与基线一致（偏差在容忍内）")
 
 
+# ---------------- 专业性（免责声明 / 结构化字段 / 路由 / 落地） ----------------
+def check_professional():
+    """验证「专业性优化」已落地：5 个 AI 能力统一带 disclaimer + 结构化字段并持久化。"""
+    print("\n[E] 专业性（免责声明 / 结构化字段 / 路由 / 落地）")
+    # 1) 结构化输出协议入口存在
+    try:
+        import ai.structured as st
+        assert hasattr(st, "attach_disclaimer") and hasattr(st, "compute_confidence")
+        ok("ai.structured 协议入口存在（attach_disclaimer / compute_confidence）")
+    except Exception as e:
+        bad(f"ai.structured 缺失: {e}")
+
+    # 2) §6.5 免责声明常量存在且非空
+    try:
+        from ai.prompts import DISCLAIMER_SEC65
+        if DISCLAIMER_SEC65 and len(DISCLAIMER_SEC65) > 10:
+            ok("ai.prompts.DISCLAIMER_SEC65 存在且非空")
+        else:
+            bad("DISCLAIMER_SEC65 缺失或为空")
+    except Exception as e:
+        bad(f"DISCLAIMER_SEC65 读取失败: {e}")
+
+    # 3) NL 回测返回含 citations / confidence / disclaimer
+    try:
+        import backtest.nl as nl
+        e = nl._err(None, False, "test")
+        if all(k in e for k in ("citations", "confidence", "disclaimer")):
+            ok("NL 回测返回含 citations / confidence / disclaimer")
+        else:
+            bad("NL 回测返回缺少结构化字段：" + str(list(e.keys())))
+    except Exception as e:
+        bad(f"NL 回测结构化检查失败: {e}")
+
+    # 4) 选股结果含 citations / confidence（确定性推导）
+    try:
+        import backtest.screener as sc
+        c = sc._sc_confidence(5000, 4800, 12)
+        if isinstance(c, float) and 0 < c <= 1:
+            ok(f"选股置信度推导正常（= {c}）")
+        else:
+            bad(f"选股置信度推导异常: {c}")
+    except Exception as e:
+        bad(f"选股结构化检查失败: {e}")
+
+    # 5) agent_session / screener_result 持久化表含结构化列
+    con = duckdb.connect(str(DB), read_only=True)
+    try:
+        # DuckDB PRAGMA table_info 列序：cid(0), name(1), type(2), ...
+        acols = {r[1] for r in con.execute("PRAGMA table_info(agent_session)").fetchall()}
+        if {"citations_json", "confidence"}.issubset(acols):
+            ok("agent_session 含 citations_json / confidence 列")
+        else:
+            bad("agent_session 缺少结构化列：" + str(acols))
+        scols = {r[1] for r in con.execute("PRAGMA table_info(screener_result)").fetchall()}
+        if {"citations_json", "confidence"}.issubset(scols):
+            ok("screener_result 含 citations_json / confidence 列")
+        else:
+            bad("screener_result 缺少结构化列：" + str(scols))
+    except Exception as e:
+        bad(f"持久化表检查失败: {e}")
+    finally:
+        con.close()
+
+    # 6) NL 回测路由默认 save=True（专业化：默认落库）
+    try:
+        rsrc = (ROOT / "web" / "routes.py").read_text(encoding="utf-8")
+        if 'payload.get("save", True)' in rsrc:
+            ok("NL 回测 / 规则回测 路由默认 save=True（默认落库）")
+        else:
+            bad("路由未设置 NL 回测默认 save=True")
+    except Exception as e:
+        bad(f"路由检查失败: {e}")
+
+
 # ---------------- API 层（可选） ----------------
 def check_api(base):
     print(f"\n[C] API 层（{base}）")
@@ -272,6 +349,7 @@ def main():
     check_data()
     check_frontend()
     check_backtest()
+    check_professional()
     if "--api" in sys.argv:
         i = sys.argv.index("--api")
         if i + 1 < len(sys.argv):

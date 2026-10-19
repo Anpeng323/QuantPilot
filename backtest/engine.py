@@ -100,7 +100,15 @@ def _run(df: pd.DataFrame, req: BacktestRequest, signal: "pd.Series | None" = No
             px = float(df[fill].iloc[i])
             if sig_prev and shares == 0:
                 exec_px = px * (1.0 + slip)
+                # 满仓买入：股数向 100 股取整；若「成交额 + 手续费」超出可用资金，
+                # 逐手回退而不是整笔放弃——否则会因几元手续费静默丢单，出现
+                # 「信号持续为多头却始终空仓」的假象（图上只有金叉标记、没有买入标记）。
                 qty = int(cash // (exec_px * 100.0)) * 100
+                while qty > 0:
+                    fee = compute_cost(req.cost, "buy", exec_px, qty)["total"]
+                    if exec_px * qty + fee <= cash:
+                        break
+                    qty -= 100
                 if qty > 0:
                     fee = compute_cost(req.cost, "buy", exec_px, qty)["total"]
                     total = exec_px * qty + fee

@@ -6,9 +6,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from jinja2 import Template
 from etl.db import get_conn
-from ai import client as llm
 from ai.prompts import PROMPT_PROFIT
-from ai.analyzers.base import stock_basic, save_analysis
+from ai.analyzers.base import stock_basic
+from ai import router
+from ai.structured import run_simple
 
 # 数据新鲜度基准：报告期年份落后此值视为陈旧（当前数据环境约 2026 年）
 REF_YEAR = 2026
@@ -135,12 +136,5 @@ def run(stock_code: str, save: bool = True) -> dict:
         return {"error": f"找不到股票 {stock_code}"}
     tpl = Template(PROMPT_PROFIT)
     prompt = tpl.render(profit_context=ctx)
-    t0 = __import__("time").time()
-    resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=1600)
-    dur = int((__import__("time").time() - t0) * 1000)
-    cost = llm.estimate_cost(resp["input_tokens"], resp["output_tokens"], resp["model"])
-    aid = save_analysis(stock_code, "profit", prompt, resp["text"],
-                        resp["model"], resp["total_tokens"], cost, dur) if save else None
-    return {"analysis_id": aid, "stock_code": stock_code, "type": "profit",
-            "response": resp["text"], "model": resp["model"],
-            "tokens": resp["total_tokens"], "cost_cny": cost, "duration_ms": dur}
+    return run_simple(router.TASK_PROFIT, stock_code, prompt, save,
+                      temperature=0.3, max_tokens=1600, atype="profit")

@@ -162,12 +162,17 @@ def create_app() -> FastAPI:
         if exchange:
             where.append("b.exchange = ?")
             params.append(exchange)
+        board_hit: list = []
         if q:
-            # 支持 拼音首字母 / 全拼 / 中文 / 代码 的模糊匹配（全市场）
+            # 支持 拼音首字母 / 全拼 / 中文 / 代码 / 板块名 的模糊匹配（全市场）
+            from etl.industry import match_boards, codes_in_boards
             codes = match_stock_codes(q)
-            if codes:
-                where.append(f"b.stock_code IN ({','.join(['?'] * len(codes))})")
-                params.extend(codes)
+            # 板块名命中（如「银行」「社会服务」）→ 并入该板块全部成分股
+            board_hit = match_boards(q)
+            merged = list(dict.fromkeys(list(codes) + codes_in_boards(board_hit)))
+            if merged:
+                where.append(f"b.stock_code IN ({','.join(['?'] * len(merged))})")
+                params.extend(merged)
             else:
                 where.append("(b.short_name LIKE ? OR b.stock_code LIKE ?)")
                 params.extend([f"%{q}%", f"%{q}%"])
@@ -194,12 +199,16 @@ def create_app() -> FastAPI:
             f"SELECT COUNT(*) FROM daily_kline a JOIN stock_basic b USING (stock_code) WHERE {where_sql}",
             total_params,
         ).fetchone()[0]
+        rows = r["rows"][:limit]
+        from etl.industry import enrich_with_board
+        enrich_with_board(rows, code_key="code")
         return {
             "trade_date": latest,
-            "rows": r["rows"][:limit],
+            "rows": rows,
             "total": total,
             "limit": limit,
             "offset": offset,
+            "boards": board_hit,
         }
 
     # ---------- 个股搜索 + 基础信息 ----------
@@ -223,6 +232,8 @@ def create_app() -> FastAPI:
         if not row:
             return {"error": f"未找到股票 {q}"}
         code = row[0]
+        from etl.industry import get_board_map
+        industry = get_board_map().get(code, "") or ""
         latest = web_db.get_latest_trade_date()
         lr = conn.execute(
             "SELECT close, change, ROUND(change_pct,2), volume, amount "
@@ -232,6 +243,7 @@ def create_app() -> FastAPI:
         return {
             "stock_code": row[0], "short_name": row[1], "exchange": row[2],
             "list_date": str(row[3]) if row[3] else None,
+            "industry": industry,
             "last_close": lr[0] if lr else None,
             "last_pct": lr[2] if lr else None,
             "last_date": str(latest),
@@ -239,15 +251,29 @@ def create_app() -> FastAPI:
 
     # ---------- 个股模糊联想（拼音首字母 / 中文 / 代码） ----------
     @app.get("/api/stock/search")
-    def stock_search(q: str = Query("", min_length=0), limit: int = Query(20, le=50)):
+    def stock_search(q: str = Query("", min_length=0), limit: int = Query(20, le=50),
+                     boards: int = Query(0, ge=0, le=1)):
         q = (q or "").strip()
         idx = get_stock_index()
+        from etl.industry import enrich_with_board
+        out: dict = {}
+        if q and boards:
+            # 板块候选（搜索框下拉展示，用于按板块筛选）
+            from etl.industry import match_boards, board_counts
+            cnt = board_counts()
+            hits = match_boards(q, limit=6)
+            if hits:
+                out["boards"] = [{"name": n, "count": cnt.get(n, 0)} for n in hits]
         if not q:
-            return {"results": idx[:limit]}
+            out["results"] = idx[:limit]
+            return out
         scored = [( _score_stock(q, s), s) for s in idx]
         scored = [(sc, s) for sc, s in scored if sc > 0]
         scored.sort(key=lambda x: (-x[0], x[1]["stock_code"]))
-        return {"results": [s for _, s in scored[:limit]]}
+        results = [s for _, s in scored[:limit]]
+        enrich_with_board(results, code_key="stock_code")
+        out["results"] = results
+        return out
 
     # ---------- 个股日 K（图表用） ----------
     @app.get("/api/stock/kline")

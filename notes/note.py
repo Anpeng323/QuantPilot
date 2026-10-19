@@ -15,7 +15,8 @@ def list_notes(stock_code: str = "", limit: int = 50) -> list:
     params.append(limit)
     conn = get_conn()
     rows = conn.execute(sql, params).fetchall()
-    return [{
+    from etl.industry import enrich_with_board
+    items = [{
         "note_id": r[0],
         "stock_code": r[1] or "",
         "title": r[2] or "",
@@ -25,6 +26,8 @@ def list_notes(stock_code: str = "", limit: int = 50) -> list:
         "updated_at": str(r[6]) if r[6] else "",
         "synced_to_vector": bool(r[7]),
     } for r in rows]
+    enrich_with_board(items)
+    return items
 
 
 def get_note(note_id: str) -> dict:

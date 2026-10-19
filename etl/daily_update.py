@@ -11,15 +11,46 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import adata
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from etl.db import get_conn
 from etl.utils import get_logger, job_runner, upsert_df, suppressed_indexes
 from etl.fetchers import fetch_sina_kline, fetch_sina_finance_index, fetch_sina_index_kline
 from data_ingest import market_cap as _mc
 from data_ingest import finance_statements as _fs
+from data_ingest import finance_sina as _fsina
 from data_ingest import industry_chain as _ic
 from data_ingest import announcement as _ann
 
 log = get_logger("daily_update")
+
+
+# ---------- 并发抓取辅助 ----------
+def _concurrent_fetch(codes, fetch_func, workers: int = 10,
+                      per_timeout: int = 15, total_timeout: int = 1800):
+    """并发抓取（IO 密集，释放 GIL 真正并行）。
+
+    - 单只票 fetch 最多等 per_timeout 秒，超时记为失败跳过，避免单票挂死整进程。
+    - 整体最多等 total_timeout 秒，超时后剩余未返回的票一律记为失败，立即收尾。
+    - 卡死的残留线程不阻塞主流程（shutdown(wait=False)）。
+    作为生成器逐个 yield (code, df_or_None, err_or_None)，调用方边收边写入，内存可控。
+    """
+    ex = ThreadPoolExecutor(max_workers=workers)
+    futures = {ex.submit(fetch_func, c): c for c in codes}
+    pending = set(futures.keys())
+    try:
+        for fut in as_completed(futures, timeout=total_timeout):
+            code = futures[fut]
+            pending.discard(fut)
+            try:
+                df = fut.result(timeout=per_timeout)
+                yield (code, df, None)
+            except Exception as e:
+                yield (code, None, f"{type(e).__name__}:{str(e)[:80]}")
+    except TimeoutError:
+        for fut in pending:
+            yield (futures[fut], None, "total_timeout")
+    finally:
+        ex.shutdown(wait=False)
 
 
 # ---------- 1. 股票基础信息 ----------
@@ -56,35 +87,40 @@ def update_trade_calendar(conn) -> int:
 
 # ---------- 3. 日 K 线 ----------
 @job_runner("daily.daily_kline", table_name="daily_kline")
-def update_daily_kline(conn, datalen: int = 30, batch_size: int = 300) -> int:
+def update_daily_kline(conn, datalen: int = 30, batch_size: int = 300,
+                       workers: int = 10, per_timeout: int = 15,
+                       total_timeout: int = 1800) -> int:
     codes = [r[0] for r in conn.execute(
         "SELECT stock_code FROM stock_basic ORDER BY stock_code"
     ).fetchall()]
-    log.info(f"准备增量更新 {len(codes)} 只票的最近 {datalen} 天日 K")
+    log.info(f"准备增量更新 {len(codes)} 只票的最近 {datalen} 天日 K（并发 workers={workers}）")
 
     total = 0
     failed = []
     batch_dfs: list[pd.DataFrame] = []
+    done = 0
+
+    def _fetch(code):
+        return fetch_sina_kline(code, k_type=1, datalen=datalen)
 
     # 批量 DELETE+INSERT 前临时卸掉二级索引，绕开 DuckDB 已知崩溃
     with suppressed_indexes(conn, "daily_kline"):
-        for i, code in enumerate(codes, 1):
-            try:
-                df = fetch_sina_kline(code, k_type=1, datalen=datalen)
-                if df.empty:
-                    continue
-                batch_dfs.append(df)
-                total += len(df)
-            except Exception as e:
-                failed.append((code, str(e)[:80]))
+        for code, df, err in _concurrent_fetch(codes, _fetch, workers, per_timeout, total_timeout):
+            done += 1
+            if err or (df is None or df.empty):
+                if err:
+                    failed.append((code, err[:80]))
+                continue
+            batch_dfs.append(df)
+            total += len(df)
 
             if len(batch_dfs) >= batch_size:
                 upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "daily_kline",
                           ["stock_code", "trade_date", "k_type", "adjust_type"], log=None)
                 batch_dfs.clear()
 
-            if i % 500 == 0 or i == len(codes):
-                log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  本次 +{total:,} 条")
+            if done % 500 == 0 or done == len(codes):
+                log.info(f"  进度: {done}/{len(codes)} ({done*100//len(codes)}%)  本次 +{total:,} 条")
 
         if batch_dfs:
             upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "daily_kline",
@@ -114,43 +150,48 @@ def update_index_kline(conn) -> int:
 
 # ---------- 5. 5 分钟 K 线（每日增量） ----------
 @job_runner("daily.minute_kline", table_name="minute_kline")
-def update_minute_kline(conn, k_type: int = 5, datalen: int = 100, batch_size: int = 300) -> int:
+def update_minute_kline(conn, k_type: int = 5, datalen: int = 100, batch_size: int = 300,
+                        workers: int = 10, per_timeout: int = 15,
+                        total_timeout: int = 3600) -> int:
     """
     每日增量：拉每只票最近 100 根 5min K（约 2 天），upsert 覆盖。
-    5640 只 ≈ 56 万行，约 8-10 分钟。
+    并发抓取，单只超时跳过，避免整进程卡死。
     """
     codes = [r[0] for r in conn.execute(
         "SELECT stock_code FROM stock_basic ORDER BY stock_code"
     ).fetchall()]
-    log.info(f"准备增量更新 {len(codes)} 只票的最近 {datalen} 根 {k_type}min K")
+    log.info(f"准备增量更新 {len(codes)} 只票的最近 {datalen} 根 {k_type}min K（并发 workers={workers}）")
 
     batch_dfs = []
     total = 0
     failed = []
+    done = 0
+
+    def _fetch(code):
+        return fetch_sina_kline(code, k_type=k_type, datalen=datalen)
 
     with suppressed_indexes(conn, "minute_kline"):
-        for i, code in enumerate(codes, 1):
-            try:
-                df = fetch_sina_kline(code, k_type=k_type, datalen=datalen)
-                if df.empty:
-                    continue
-                df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.date
-                df["trade_time"] = pd.to_datetime(df["trade_time"])
-                df["k_type"]     = k_type
-                df = df[["stock_code", "trade_time", "trade_date", "k_type",
-                         "open", "high", "low", "close", "volume", "amount"]]
-                batch_dfs.append(df)
-                total += len(df)
-            except Exception as e:
-                failed.append((code, str(e)[:80]))
+        for code, df, err in _concurrent_fetch(codes, _fetch, workers, per_timeout, total_timeout):
+            done += 1
+            if err or (df is None or df.empty):
+                if err:
+                    failed.append((code, err[:80]))
+                continue
+            df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.date
+            df["trade_time"] = pd.to_datetime(df["trade_time"])
+            df["k_type"]     = k_type
+            df = df[["stock_code", "trade_time", "trade_date", "k_type",
+                     "open", "high", "low", "close", "volume", "amount"]]
+            batch_dfs.append(df)
+            total += len(df)
 
             if len(batch_dfs) >= batch_size:
                 upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "minute_kline",
                           ["stock_code", "trade_time", "k_type"], log=None)
                 batch_dfs.clear()
 
-            if i % 1000 == 0 or i == len(codes):
-                log.info(f"  进度: {i}/{len(codes)} ({i*100//len(codes)}%)  本次 +{total:,} 条")
+            if done % 1000 == 0 or done == len(codes):
+                log.info(f"  进度: {done}/{len(codes)} ({done*100//len(codes)}%)  本次 +{total:,} 条")
 
         if batch_dfs:
             upsert_df(conn, pd.concat(batch_dfs, ignore_index=True), "minute_kline",
@@ -216,6 +257,13 @@ def update_finance_statements(conn, per_night: int = 50) -> int:
     return stats["added"]
 
 
+# ---------- 8.5 新浪财务摘要（替代东财源，独立新表，不破坏因子） ----------
+@job_runner("daily.finance_abstract", table_name="finance_abstract")
+def update_finance_abstract(conn, per_night: int = 100) -> int:
+    stats = _fsina.run_incremental(per_night=per_night)
+    return stats["added"]
+
+
 # ---------- 9. 产业链/概念图谱渐进回填（每夜配额，逐步铺满板块关系） ----------
 @job_runner("daily.industry_chain", table_name="industry_chain")
 def update_industry_chain(conn, per_night: int = 30) -> int:
@@ -243,6 +291,7 @@ def run_all(datalen: int = 30, minute_datalen: int = 100,
     update_index_minute_kline(datalen=minute_datalen)
     update_market_cap()
     update_finance_statements(per_night=per_night)
+    update_finance_abstract(per_night=per_night)
     update_industry_chain(per_night=chain_per_night)
     update_announcement(days=ann_days)
     log.info("每日增量更新完成")
@@ -260,7 +309,7 @@ if __name__ == "__main__":
                         help="产业链板块每夜最多处理数（渐进铺满板块关系）")
     parser.add_argument("--ann-days", type=int, default=1,
                         help="公告抓取回溯交易日数")
-    parser.add_argument("--only", default="", help="basic,calendar,kline,index,minute,index_minute,market_cap,finance_statements,industry_chain,announcement")
+    parser.add_argument("--only", default="", help="basic,calendar,kline,index,minute,index_minute,market_cap,finance_statements,finance_abstract,industry_chain,announcement")
     args = parser.parse_args()
 
     only = set(args.only.split(",")) if args.only else None
@@ -280,6 +329,8 @@ if __name__ == "__main__":
         update_market_cap()
     if only is None or "finance_statements" in only:
         update_finance_statements(per_night=args.per_night)
+    if only is None or "finance_abstract" in only:
+        update_finance_abstract(per_night=args.per_night)
     if only is None or "industry_chain" in only:
         update_industry_chain(per_night=args.chain_per_night)
     if only is None or "announcement" in only:

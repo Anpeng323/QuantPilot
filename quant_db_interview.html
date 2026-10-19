@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Quant DB · AI 量化投研工作台 — 项目总结（面试版）</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  window.mermaid && mermaid.initialize({
+    startOnLoad: true,
+    theme: "dark",
+    securityLevel: "loose",
+    flowchart: { htmlLabels: true, useMaxWidth: true, curve: "basis", padding: 16 },
+    sequence: { useMaxWidth: true },
+    themeVariables: { fontSize: "16px", nodeBorderRadius: "6px" }
+  });
+</script>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --panel2:#1e2230; --ink:#e6e9ef; --muted:#9aa3b2;
+    --line:#2a2f3d; --accent:#4f8cff; --accent2:#34d399; --warn:#f6b73c; --danger:#ff6b6b;
+    --chip:#222838;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       line-height:1.7;font-size:15px}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 24px 80px}
+  header.hero{background:linear-gradient(135deg,#1c2740,#10131c);border:1px solid var(--line);
+       border-radius:16px;padding:28px 30px;margin-bottom:22px}
+  header.hero h1{margin:0 0 6px;font-size:26px;letter-spacing:.5px}
+  header.hero p{margin:4px 0;color:var(--muted)}
+  .tag{display:inline-block;background:var(--chip);border:1px solid var(--line);color:#cdd6e6;
+       border-radius:999px;padding:2px 10px;font-size:12px;margin:3px 4px 0 0}
+  nav.toc{position:sticky;top:0;z-index:20;background:rgba(15,17,23,.92);backdrop-filter:blur(6px);
+       border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin:0 0 26px;
+       display:flex;flex-wrap:wrap;gap:6px}
+  nav.toc a{color:#cdd6e6;text-decoration:none;font-size:13px;padding:4px 10px;border-radius:8px}
+  nav.toc a:hover{background:var(--panel2);color:#fff}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+       padding:22px 26px;margin:18px 0}
+  h2{font-size:20px;margin:2px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;color:#cfe0ff;margin:20px 0 8px}
+  h4{font-size:14px;color:var(--accent2);margin:14px 0 6px}
+  p{margin:8px 0}
+  .muted{color:var(--muted)}
+  ul,ol{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+  code{background:#0c0e14;border:1px solid var(--line);border-radius:6px;padding:1px 6px;
+       font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:#ffd9a0}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:820px){.g2,.g3{grid-template-columns:1fr}}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card b{color:#fff}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cfe0ff}
+  tr:nth-child(even) td{background:#14171f}
+  .kpi{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}
+  .kpi .box{flex:1;min-width:150px;background:var(--panel2);border:1px solid var(--line);
+       border-radius:12px;padding:12px 14px}
+  .kpi .box .n{font-size:22px;color:var(--accent);font-weight:700}
+  .kpi .box .t{font-size:12px;color:var(--muted)}
+  .diagram{background:#0c0e14;border:1px solid var(--line);border-radius:12px;padding:18px;overflow:auto}
+  .diagram svg{max-width:none !important;height:auto;margin:0 auto;display:block}
+  .zoom-bar{position:fixed;right:20px;bottom:20px;z-index:50;display:flex;align-items:center;gap:6px;
+    background:#11151f;border:1px solid var(--line);border-radius:999px;padding:6px 10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:13px;color:var(--ink)}
+  .zoom-bar button{background:#1b2230;color:var(--ink);border:1px solid var(--line);border-radius:8px;
+    min-width:30px;height:30px;padding:0 10px;cursor:pointer;font-size:14px;line-height:1}
+  .zoom-bar button:hover{background:#26304a;border-color:var(--accent)}
+  .zoom-bar .val{min-width:46px;text-align:center;color:var(--muted);font-variant-numeric:tabular-nums}
+  .note{background:#15233a;border-left:3px solid var(--accent);border-radius:6px;padding:10px 14px;margin:10px 0}
+  .warn{background:#2a2410;border-left:3px solid var(--warn)}
+  .good{background:#10261d;border-left:3px solid var(--accent2)}
+  .flow{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+       background:#0c0e14;border:1px solid var(--line);border-radius:10px;padding:12px 14px;white-space:pre;overflow:auto}
+  .hl{color:var(--accent2);font-weight:600}
+  .pill{display:inline-block;background:var(--chip);border:1px solid var(--line);border-radius:6px;
+        padding:1px 8px;font-size:12px;color:#cdd6e6;margin:0 2px}
+  footer{color:var(--muted);font-size:12px;text-align:center;margin-top:30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>Quant DB · AI 量化投研工作台</h1>
+  <p class="muted">一个面向 A 股的全栈量化投研系统：从多源金融数据接入，到基于大模型（LLM）的多-Agent 投研分析与对话。</p>
+  <p>
+    <span class="tag">Python · MySQL + Chroma</span>
+    <span class="tag">FastAPI</span>
+    <span class="tag">ReAct Agent</span>
+    <span class="tag">RAG（Chroma 向量库）</span>
+    <span class="tag">MiniMax / Qwen / DeepSeek</span>
+    <span class="tag">因子计算 · 回测</span>
+    <span class="tag">合规护栏</span>
+  </p>
+  <p class="muted" style="margin-top:8px">一句话定位：<b>“用 LLM Agent 把分散的行情 / 财务 / 研报 / 公告数据，变成可对话、可溯源的投研结论。”</b></p>
+</header>
+
+<nav class="toc">
+  <a href="#overview">1 项目概览</a>
+  <a href="#stack">2 技术栈</a>
+  <a href="#arch">3 整体架构图</a>
+  <a href="#data">4 数据层与 ETL</a>
+  <a href="#ailayer">5 AI 能力架构</a>
+  <a href="#llm">6 LLM 接入与路由</a>
+  <a href="#agent">7 ReAct Agent 工作流</a>
+  <a href="#tools">8 工具白名单</a>
+  <a href="#analyzers">9 分析器体系</a>
+  <a href="#report">10 综合报告生成</a>
+  <a href="#rag">11 RAG 知识库</a>
+  <a href="#guard">12 合规与护栏</a>
+  <a href="#web">13 接口与前端</a>
+  <a href="#interview">14 面试要点</a>
+</nav>
+
+<!-- ============ 1 ============ -->
+<section id="overview">
+  <h2>1 · 项目概览</h2>
+  <p>系统解决的核心问题：<b>投研信息分散在行情软件、财报 PDF、券商研报、交易所公告里，研究员要在多个系统间来回切换，且结论难以复用和溯源。</b>
+  本项目把它收敛成一个统一的、可被大模型驱动的工作台：</p>
+  <ul>
+    <li><b>数据底座</b>：自动接入行情 / 财务 / 估值 / 因子 / 产业链 / 宏观 / 公告研报等多源数据，落地到统一<b>存储层（关系库 MySQL + 向量库 Chroma）</b>，全市场口径统一。</li>
+    <li><b>AI 分析层（重点）</b>：以 <span class="pill">ReAct Agent</span> 为核心，配合 13 个白名单工具、13 个专业分析器、一套本地 RAG 知识库，把“查数据 → 算指标 → 写报告 → 对话问答”串成可编排的工作流。</li>
+    <li><b>服务层</b>：FastAPI 暴露 REST / 流式接口，前端工作台调用，支持多轮追问、回测、选股、综合报告。</li>
+  </ul>
+  <div class="kpi">
+    <div class="box"><div class="n">13</div><div class="t">Agent 白名单工具</div></div>
+    <div class="box"><div class="n">13</div><div class="t">专业分析器（analyzers）</div></div>
+    <div class="box"><div class="n">4</div><div class="t">可切换 LLM Provider</div></div>
+    <div class="box"><div class="n">≈5500</div><div class="t">全市场个股覆盖</div></div>
+    <div class="box"><div class="n">2</div><div class="t">存储分层（关系库 + 向量库）</div></div>
+  </div>
+  <div class="note good">本总结面向 <b>AI 大模型应用岗</b>：第 5–12 节是重点，完整还原了 Agent 编排、工具调用、RAG、模型路由、护栏与降级等真实工程细节，可直接用于面试讲述。</div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="stack">
+  <h2>2 · 技术栈</h2>
+  <div class="grid g3">
+    <div class="card"><b>语言 / 运行时</b><br><span class="muted">Python 3.13 · 虚拟环境 venv · 多线程 / 线程池并发</span></div>
+    <div class="card"><b>存储</b><br><span class="muted">关系/分析库 <b>MySQL</b> + 向量库 <b>Chroma</b>（RAG 检索）</span></div>
+    <div class="card"><b>数据接入</b><br><span class="muted">akshare / adata（免费、无需 token）；Sina 行情、东财/研报/公告、Tushare 可选</span></div>
+    <div class="card"><b>大模型</b><br><span class="muted">MiniMax（M3 深度 / M3.1-Flash 轻量）为主，兼容 Qwen、DeepSeek、Mock</span></div>
+    <div class="card"><b>Web 框架</b><br><span class="muted">FastAPI · 静态前端（Workbench UI）· SSE 进度推送</span></div>
+    <div class="card"><b>AI 工程</b><br><span class="muted">ReAct Agent · 工具白名单 · 本地 RAG（loader/chunker/embedder/rerank）· DSL+NL 回测沙箱</span></div>
+  </div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="arch">
+  <h2>3 · 系统整体架构图</h2>
+  <p class="muted">四层：数据源 → ETL → 存储 → AI/服务，外加外部 LLM Provider。AI 层是本项目的“大脑”。</p>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  subgraph SRC[① 数据源层 · 多源接入]
+    S1[新浪行情与财务指数]
+    S2[AkShare 东方财富行情 / 研报 / 公告]
+    S3[adata 基础信息与核心财务]
+    S4[新浪财务摘要（finance_abstract）]
+    S5[外部 PDF / 研报 / 公告 知识库]
+  end
+  subgraph ETL[② ETL 层 · 增量更新]
+    E1[快速行情更新脚本（update_kline_fast）]
+    E2[每日更新调度（job_runner）]
+    E3[各业务域数据采集（data_ingest）]
+    E4[因子重算（analysis/factors）]
+  end
+  subgraph STORE[③ 存储层 · 关系库 MySQL + 向量库 Chroma]
+    D1[关系库：行情 / 分钟 / 指数 K线]
+    D2[关系库：财务核心 / 报表 / 摘要表]
+    D3[关系库：日频因子数据]
+    D4[关系库：总市值 / 产业链数据]
+    D5[向量库 Chroma：文档 + 向量 + 元数据]
+    D6[关系库：分析 / 会话记录]
+  end
+  subgraph AI[④ AI 应用层 · 大模型应用核心]
+    A0[ReAct 智能体编排（react）]
+    A1[13 个数据 / 分析工具白名单]
+    A2[13 个分析器（估值 / 风险等）]
+    A3[综合分析报告生成]
+    A4[本地知识库 RAG 检索]
+    A5[自然语言转代码回测沙箱]
+    A6[金融合规护栏]
+  end
+  subgraph SVC[⑤ 服务 / 前端层]
+    W1[FastAPI 接口（ai_routes）]
+    W2[Workbench 前端界面]
+    W3[SSE 流式进度推送]
+  end
+  subgraph LLM[⑥ 外部 LLM Provider]
+    L1[MiniMax-M3 深度推理]
+    L2[MiniMax-Flash 轻量推理]
+    L3[Qwen / DeepSeek / Mock 备选]
+  end
+
+  S3 --> E3
+  E3 --> D2
+  D1 --> A1
+  A0 --> W1
+  L1 -.-> A0
+</pre>
+  </div>
+  <div class="note">数据流向：<b>多源采集 → 落库存储层（关系库 + 向量库）→ AI 工具/分析器按需查询 → 通过 API 返回前端</b>。LLM 不直接碰数据库，只接收“工具 Observation（结构化结果）”与提示词，杜绝 SQL 注入与越权。存储层由 <b>MySQL（关系/分析）+ Chroma（向量/RAG）</b> 组成。</div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="data">
+  <h2>4 · 数据层与 ETL（AI 的“燃料”）</h2>
+  <p>AI 结论的质量取决于数据覆盖度，因此数据层设计强调 <b>多源冗余 + 渐进回填 + 单存储统一</b>。</p>
+  <h3>关键数据表（存储层 · 关系库 MySQL）</h3>
+  <table>
+    <tr><th>表</th><th>内容</th><th>接入模块</th><th>说明</th></tr>
+    <tr><td><code>daily_kline</code> / <code>minute_kline</code> / <code>index_kline</code></td><td>日/5分/指数 K线</td><td><code>etl.fetchers</code> (Sina)</td><td>并发抓取 + 单连接批量写入</td></tr>
+    <tr><td><code>stock_basic</code></td><td>全市场股票列表</td><td>adata 缓存</td><td>约 5500 只</td></tr>
+    <tr><td><code>finance_core</code></td><td>核心财务指标</td><td><code>finance_adata</code></td><td>eps/roe/毛利率/营收等</td></tr>
+    <tr><td><code>finance_statement</code></td><td>三表明细（长表）</td><td><code>finance_statements</code></td><td>东财源（本机部分受限）</td></tr>
+    <tr><td><span class="hl">finance_abstract</span></td><td><span class="hl">新浪财务摘要（新表）</span></td><td><span class="hl">finance_sina</span></td><td><span class="hl">双源改造新增，独立于原表，不动因子</span></td></tr>
+    <tr><td><code>factors_daily</code></td><td>Alpha 因子</td><td><code>analysis/factors</code></td><td>每日重算</td></tr>
+    <tr><td><code>stock_market_cap</code></td><td>市值快照</td><td><code>market_cap</code></td><td>东财源</td></tr>
+    <tr><td><code>industry_chain</code></td><td>行业/产业链归属</td><td><code>industry_chain</code></td><td>同业可比样本</td></tr>
+    <tr><td><span class="hl">doc</span> + 向量 <code>chunks</code></td><td>研报/公告/笔记 + 嵌入（存于<b>向量库 Chroma</b>）</td><td><code>knowledge/*</code></td><td>RAG 知识库（与关系库解耦）</td></tr>
+    <tr><td><code>macro_indicator</code></td><td>CPI/PMI/LPR 等</td><td><code>macro</code></td><td>宏观分析</td></tr>
+  </table>
+  <h3>ETL 设计要点</h3>
+  <ul>
+    <li><b>快速版 <code>update_kline_fast.py</code></b>：复用并发抓取（线程池 + 单只超时），每个任务独立 try/except，<span class="pill">soft-fail</span> 不互相阻断；支持 <code>--only</code> 选跑、<code>--no-system-proxy</code> 直连。</li>
+    <li><b>渐进回填</b>：财务/产业链等重任务每夜只新增固定配额（per_night），多夜铺满全市场，避免单夜超时。</li>
+    <li><b>双源改造（路径 2，本项目的真实工程决策）</b>：东财网络在本机受限，财务改用 <code>ak.stock_financial_abstract</code>（新浪）建<b>独立新表</b> <code>finance_abstract</code>，<b>不改动</b>原有 <code>finance_statement</code>/<code>finance_core</code>，从而不破坏已有因子计算链路；市值暂无法替代则保持冻结态。</li>
+  </ul>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="ailayer">
+  <h2>5 · AI 能力架构（重点）</h2>
+  <p>AI 层是项目灵魂，由「<b>一个 Agent 编排核心（大脑）</b>」+「<b>三层能力</b>」组成：① <b>工具层</b>（白名单，拿原始数据）② <b>分析器层</b>（专家，出专业结论）③ <b>基础底座</b>（模型路由 / 知识库 / 结构化等公共能力）。编排核心统一调度三层，三层再落到存储层与外部大模型。</p>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  subgraph CORE[Agent 编排核心 · 大脑]
+    RC[ReAct 主循环（react.ask）]
+    INT[意图识别（intent）]
+    COM[合规校验（compliance）]
+    CONF[置信度（confidence）]
+  end
+
+  subgraph L1[① 工具层 · 白名单 13 个]
+    T1[获取实时行情]
+    T2[获取财务 / 摘要数据]
+    T3[个股对比分析]
+    T4[知识库检索]
+    T5[执行回测]
+    T6[投资建议生成]
+    T7[联网 / 研报 / 宏观 / 行业搜索]
+  end
+  subgraph L2[② 分析器层 · 专家能力 13 个]
+    AN1[财务 / 估值 / 风险分析]
+    AN2[DCF / 盈利 / 对比分析]
+    AN3[行业 / 宏观 / 情绪分析]
+    AN4[综合分析报告]
+  end
+  subgraph L3[③ 基础底座 · 公共能力]
+    CLI[统一 LLM 客户端（client）]
+    RTR[模型路由（router）]
+    RAGN[本地知识库（RAG）]
+    ST[结构化 / 评分 / 引用]
+  end
+
+  DB[(存储层（MySQL + Chroma）)]
+  PRV[(外部大模型服务)]
+
+  RC --> INT
+  RC --> COM
+  RC --> CONF
+  RC -->|调度| L1
+  RC -->|调度| L2
+  RC -->|调度| L3
+  L2 -->|先取数| L1
+  L2 -->|选模型 / 检索 / 评分| L3
+  L1 -->|读写| DB
+  L3 -->|向量检索| DB
+  L3 -->|调用| PRV
+</pre>
+  </div>
+  <h4>为什么这样分层？</h4>
+  <ul>
+    <li><b>Agent 不直接写提示词调 LLM</b>，而是经过 <code>router</code> 按任务类型选模型、经过 <code>structured</code> 统一做评分/引用/降级——能力可复用、可测试。</li>
+    <li><b>工具与分析器解耦</b>：Agent 通过工具拿“原始数据”，分析器面向“专业结论”；综合报告分析器会自行调用工具子集走一轮轻量 ReAct。</li>
+    <li><b>合规与置信度是“横切”逻辑</b>，在 Agent 出口与分析器出口统一生效，保证所有对外输出都带免责声明与可信度。</li>
+  </ul>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="llm">
+  <h2>6 · LLM 接入与模型路由</h2>
+  <h3>统一客户端 <code>ai/client.py</code></h3>
+  <ul>
+    <li><b>多 Provider 抽象</b>：基于 OpenAI 兼容接口，支持 <span class="pill">MiniMax</span>（主）、<span class="pill">Qwen</span>、<span class="pill">DeepSeek</span>、<span class="pill">Mock</span>，用环境变量 <code>LLM_PROVIDER</code> 切换。</li>
+    <li><b>生产级韧性</b>：响应缓存（模型+消息指纹，TTL 24h，省 token）、<span class="pill">指数退避重试 ×2</span>、空内容视为失败触发重试、最终失败<span class="pill">降级返回</span>（degraded=True，不抛 500）。</li>
+    <li><b>质量处理</b>：剥离模型 <code>&lt;think&gt;</code> 推理块、注入强制中文系统提示、进度回调（线程局部，供前端 SSE 推送）。</li>
+    <li><b>成本可观测</b>：<code>estimate_cost</code> 按模型单价估算每次调用花费（元）。</li>
+  </ul>
+  <h3>模型路由 <code>ai/router.py</code></h3>
+  <p>按 <code>task_type</code> 自动选模型，平衡效果与成本/时延：</p>
+  <table>
+    <tr><th>任务类型</th><th>路由模型</th><th>理由</th></tr>
+    <tr><td>财报 / 估值 / DCF / 行业 / 综合 / 回测结论</td><td>MiniMax-M3（深度）</td><td>推理强、需长上下文</td></tr>
+    <tr><td>情绪 / 抽取 / 分类 / 摘要 / 预警分类</td><td>MiniMax-M3.1-Flash</td><td>快且便宜</td></tr>
+    <tr><td>RAG 长文问答</td><td>MiniMax-M3（1M 上下文）</td><td>容纳检索片段</td></tr>
+  </table>
+  <div class="note">面试可讲：<b>“不是所有请求都打最贵模型”</b>——深度任务用 M3，轻量任务用 Flash，既控成本又保体验；路由表可配置热更新。</div>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="agent">
+  <h2>7 · ReAct Agent 工作流（重点）</h2>
+  <p><code>ai/agent/react.py</code> 是系统的对话大脑。它实现了一个受约束的 <b>ReAct（Reasoning + Acting）循环</b>：LLM 输出 <code>Thought + Action(JSON)</code> → 执行白名单工具 → 回填 Observation → 下一轮，直至 <code>final_answer</code> 或达到最大步数（默认 6）。</p>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  A0[用户提问] --> A1{意图识别与分类}
+  A1 -->|无标的 + 闲聊 / 能力咨询| CH[闲聊快速通道（单次回复）]
+  A1 -->|投研意图 / 含股票| AG[投研 Agent 主流程]
+  AG --> P1[预取真实行情快照（防幻觉）]
+  P1 --> LOOP{{ReAct 推理循环（最多 6 步）}}
+  LOOP --> L1[模型生成思考与动作]
+  L1 --> L2{解析动作结果}
+  L2 -->|final_answer| FA[生成最终答案]
+  L2 -->|action| L3[白名单工具调用执行]
+  L3 --> L4[观测结果回填上下文]
+  L4 --> LOOP
+  LOOP -->|步数耗尽未收敛| SYN[独立上下文强制合成]
+  FA --> G1[结构化数据转自然语言]
+  SYN --> G1
+  G1 --> G2[合规改写与免责声明]
+  G2 --> G3[置信度计算]
+  G3 --> G4[生成追问建议]
+  G4 --> OUT[返回答案与引用等结果]
+  CH --> OUT
+</pre>
+  </div>
+
+  <h3>关键工程细节（强烈建议面试展开）</h3>
+  <div class="grid g2">
+    <div class="card"><b>① 防幻觉：预取真实数据</b><br>进入推理前先调一次 <code>get_quote</code> 把真实行情喂给模型，并在系统提示里<b>严禁凭记忆编造数字</b>——每个具体数字必须来自工具 Observation。</div>
+    <div class="card"><b>② 强制取数护栏</b><br>若模型声称“数据拿不到”却一次工具都没调，或涉及个股却凭记忆作答，会<b>主动回灌提示</b>逼它先调真实工具；回测请求未跑则强制调用 <code>run_backtest</code>。</div>
+    <div class="card"><b>③ 抗“元信息回复”</b><br>识别并过滤“已切到严格 JSON 模式”这类复述格式的无意义回复，必要时用独立干净上下文重新合成，绝不让格式提示变成最终答案。</div>
+    <div class="card"><b>④ 结构化→人话</b><br>模型若把 JSON/键值对当答案，触发 <code>_humanize</code> 二次 LLM 改写或兜底摊平成中文要点，保证输出可读。</div>
+    <div class="card"><b>⑤ 多轮省略主语</b><br>“它风险呢？”这类追问，沿历史对话解析最近标的继续作答；寒暄走秒级直达通道，避免被 ReAct 的 JSON 约束带偏。</div>
+    <div class="card"><b>⑥ 确定性置信度</b><br>置信度由“已取数工具覆盖度”确定性推导（0.3–0.95），<b>不额外消耗 LLM</b>，可解释、可审计。</div>
+  </div>
+  <div class="note good">一句话总结 Agent 设计哲学：<b>“LLM 只负责推理与表达，所有事实必须来自白名单工具返回的结构化 Observation；格式、幻觉、合规在出口统一兜住。”</b></div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="tools">
+  <h2>8 · 工具白名单（Agent 的能力边界）</h2>
+  <p>所有工具在 <code>ai/agent/tools.py</code> 的 <code>TOOLS</code> 注册表集中声明（描述 + 参数 schema + 实现函数 + 超时/重试）。<code>call_tool</code> 做白名单校验、参数校验、线程池超时执行。下表即 Agent 实际可用的 13 个工具：</p>
+  <table>
+    <tr><th>工具</th><th>能力</th><th>数据来源</th></tr>
+    <tr><td><code>get_quote</code></td><td>最新行情 + MA20/MA60 等技术指标</td><td>Sina K线</td></tr>
+    <tr><td><code>get_financials</code></td><td>三表/估值指标摘要</td><td>finance_core</td></tr>
+    <tr><td><span class="hl">get_financial_abstract</span></td><td><span class="hl">新浪财务摘要快照/指标时间序列</span></td><td><span class="hl">finance_abstract（新表）</span></td></tr>
+    <tr><td><code>compare_stocks</code></td><td>多股 PE/PB/ROE/毛利率横向对比</td><td>comparative 分析器</td></tr>
+    <tr><td><code>rag_retrieve</code></td><td>知识库检索 + 引用</td><td>knowledge RAG</td></tr>
+    <tr><td><code>summarize_filing</code></td><td>基于 RAG 的财报/公告摘要</td><td>RAG</td></tr>
+    <tr><td><code>run_backtest</code></td><td>规则回测，返回收益/回撤/夏普/胜率</td><td>backtest 引擎</td></tr>
+    <tr><td><code>suggest_investment</code></td><td>估值/风险/财报综合观点</td><td>多分析器聚合</td></tr>
+    <tr><td><code>web_search</code></td><td>联网搜索（MiniMax 服务端优先）</td><td>MiniMax web / akshare 新闻</td></tr>
+    <tr><td><code>get_research_reports</code></td><td>机构研报 / 评级 / 盈利预测</td><td>akshare</td></tr>
+    <tr><td><code>get_announcements</code></td><td>个股公告</td><td>announcement 入库</td></tr>
+    <tr><td><code>get_macro</code></td><td>CPI/PMI/LPR 等宏观</td><td>macro_indicator</td></tr>
+    <tr><td><code>get_industry</code></td><td>行业归属与可比同业</td><td>industry_chain</td></tr>
+  </table>
+  <div class="note">安全要点：工具执行在<b>白名单 + 参数 schema 校验 + 超时线程池</b>三重约束下；越权工具名直接拒绝（如 <code>os.system</code>）。LLM 永远拿不到原始 DB 连接。</div>
+</section>
+
+<!-- ============ 9 ============ -->
+<section id="analyzers">
+  <h2>9 · 专业分析器体系</h2>
+  <p>13 个分析器（<code>ai/analyzers/*</code>）是“专家能力”，通过 <code>ai/analyzers/__init__.run(code, type)</code> 按类型分发。每个分析器只拼专业提示词，统一收尾交给 <code>ai.structured.run_simple</code>：<b>路由调 LLM → 框架约束 → 抽取评分 → 计算置信度 → 来源标注 → 落库 → 统一追加免责声明</b>。</p>
+  <div class="grid g3">
+    <div class="card"><b>financial</b> 财务质量</div>
+    <div class="card"><b>valuation</b> 估值水平</div>
+    <div class="card"><b>risk</b> 风险扫描</div>
+    <div class="card"><b>sentiment</b> 情绪</div>
+    <div class="card"><b>industry</b> 行业</div>
+    <div class="card"><b>macro</b> 宏观</div>
+    <div class="card"><b>comparative</b> 同业对比</div>
+    <div class="card"><b>dcf</b> 现金流折现</div>
+    <div class="card"><b>profit</b> 盈利拆解</div>
+    <div class="card"><b>comprehensive</b> 综合报告</div>
+    <div class="card"><b>news</b> 新闻</div>
+    <div class="card"><b>base</b> 公共基类/落库</div>
+  </div>
+  <h4>置信度与引用（确定性，零额外 LLM 成本）</h4>
+  <ul>
+    <li><code>compute_confidence(stock_code)</code>：按 finance_core / factors_daily / 市值 / 文档四类覆盖度加权推导 0.3–0.99，无数据取最低 0.3，避免虚高。</li>
+    <li><code>extract_score</code>：从 LLM 输出“## 评分与置信度”正则抽取 0–100 综合评分。</li>
+    <li><code>build_data_citations</code>：自动列出确实含该股票的表作为数据来源标注。</li>
+  </ul>
+  <div class="note">面试亮点：<b>把“置信度/引用/评分”从 LLM 生成中解耦成确定性函数</b>，既省 token 又保证可复现、可审计，是生产级 LLM 应用的常见降本增效手法。</div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section id="report">
+  <h2>10 · 综合报告生成器（轻量 ReAct + RAG + 溯源）</h2>
+  <p><code>ai/analyzers/comprehensive.py</code> 产出一份统一专业个股报告，本身也是一个<b>受控的 ReAct 循环</b>（6 步，工具白名单子集：行情/财务/研报/公告/行业/宏观/RAG/联网）。它最能体现“Agent + RAG + 可溯源”的工程结合：</p>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  S0[输入目标股票代码] --> S1[设定六章报告结构与引用规范]
+  S1 --> LP{{ReAct 循环（最多 6 步）}}
+  LP --> L1[模型决策：调工具或收口]
+  L1 -->|action| L2[调用白名单工具子集]
+  L2 --> L3[观测结果回填]
+  L3 --> LP
+  L1 -->|final_answer| R1[检查引用完整性]
+  R1 -->|正文引用编号但缺定义| R2[缺引用时确定性重建来源清单]
+  R1 -->|完整| R3[输出报告]
+  R2 --> R3
+  R3 --> R4[补齐参考资料章节]
+  R4 --> OUT[保存分析与引用记录]
+</pre>
+  </div>
+  <ul>
+    <li><b>引用溯源</b>：从工具返回中确定性提取真实出处（研报名/公告标题/网页链接/财报期），按 <code>[1][2][3]</code> 编号，正文与参考资料一一对应，杜绝“编造引用”。</li>
+    <li><b>嵌套调用规避</b>：综合报告只放“纯取数”工具；会再触发 LLM 的 <code>compare_stocks</code>/<code>suggest_investment</code> 不纳入，避免超 15s 超时与递归。</li>
+    <li><b>进度可观测</b>：<code>on_stage</code> 回调向上层推送“准备/思考/调工具/渲染”进度，前端据此做 SSE 流式展示。</li>
+  </ul>
+</section>
+
+<!-- ============ 11 ============ -->
+<section id="rag">
+  <h2>11 · RAG 知识库链路</h2>
+  <p><code>knowledge/</code> 实现了完整 RAG 流水线：文档原文 + 向量 + 元数据统一存入<b>专用向量库 Chroma</b>（与关系库解耦）。</p>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  F[原始文档（PDF / 研报 / 公告）] --> LD[文档解析加载]
+  LD --> CK[段落切片分块]
+  CK --> EM[本地向量嵌入]
+  EM --> VS[(Chroma 向量库)]
+  Q[用户提问] --> EQ[问题向量化]
+  EQ --> VQ[向量相似检索]
+  VQ --> RR[本地重排与过滤]
+  RR --> EN[补充文档元数据]
+  EN --> P[拼接提示词]
+  P --> LLM[模型生成带引用回答]
+  LLM --> OUT[RAG 检索工具返回结果]
+</pre>
+  </div>
+  <ul>
+    <li><b>本地 rerank</b>：不接付费重排服务，用“相似度阈值过滤 + 文档类型 boosting（报告/公告权重更高）+ 标题词重叠加分”做轻量重排，降噪且零成本。</li>
+    <li><b>可溯源</b>：每个 chunk 带 <code>doc_id / section / doc_type / stock_code</code> 元数据，检索结果能回链到具体文档与章节，支撑上文的引用标注。</li>
+    <li><b>复用</b>：<code>rag_retrieve</code> 与 <code>summarize_filing</code> 两个 Agent 工具共用该链路；综合报告也调用它。</li>
+  </ul>
+  <div class="note">面试可讲：<b>“RAG 不只是向量检索，检索质量（切片策略、重排、元数据过滤）与引用溯源同样关键”</b>——本项目用本地 rerank + 元数据 boosting（向量库 Chroma 的 payload 过滤）拿到可用召回，且引用能回链到具体章节。</div>
+</section>
+
+<!-- ============ 12 ============ -->
+<section id="guard">
+  <h2>12 · 合规与护栏（投研场景刚需）</h2>
+  <p>金融内容有强合规要求，<code>ai/agent/compliance.py</code> 在出口统一处理：</p>
+  <ul>
+    <li><b>禁用词改写</b>：命中“买入/卖出/目标价/必涨/保本/无风险”等荐股与收益承诺词时，<b>主动改写为中性投研表述</b>（如“关注”“注意风险”），并标记 <code>investment_view</code>。</li>
+    <li><b>免责声明</b>：所有对外回答统一追加“AI 基于公开数据的投研观点，仅供参考，不构成投资建议”声明（<code>attach_disclaimer</code>，只追加一次）。</li>
+    <li><b>护栏分层</b>：Agent 出口（compliance）、分析器出口（attach_disclaimer）双保险；系统提示硬约束“禁止确定性收益承诺”。</li>
+  </ul>
+  <div class="note warn">为什么重要：LLM 在金融场景极易“越界给出买卖建议”，把合规做成<b>可测试、可拦截、可改写</b>的确定性层，是这类产品上线的前提。</div>
+</section>
+
+<!-- ============ 13 ============ -->
+<section id="web">
+  <h2>13 · 接口与前端</h2>
+  <p>FastAPI 分层路由：</p>
+  <table>
+    <tr><th>模块</th><th>路由示例</th><th>职责</th></tr>
+    <tr><td><code>web/app.py</code></td><td><code>/api/snapshot</code> <code>/api/stock/info</code> <code>/api/stock/kline</code> <code>/api/stock/search</code>（拼音首字母模糊）</td><td>行情/快照/搜索</td></tr>
+    <tr><td><code>web/routes.py</code></td><td><code>/api/v1/backtest/tasks</code> <code>/api/v1/screener/*</code></td><td>回测任务、自然语言选股</td></tr>
+    <tr><td><code>web/ai_routes.py</code></td><td><span class="hl">POST /api/v1/agent/ask</span> <code>/api/v1/analyze</code> <code>/api/v1/comprehensive</code> <code>/api/v1/rag/query</code> <code>/api/v1/nl/run</code></td><td>AI 投研问答（核心）</td></tr>
+  </table>
+  <p><code>/api/v1/agent/ask</code> 接收 <code>{question, history, stock_code}</code>，调用 <code>ai.agent.ask</code>，返回 <code>{answer, steps, citations, confidence, disclaimer, suggestions}</code>，并落库 <code>agent_session</code> 支撑多轮。</p>
+  <h4>多轮对话时序（Agent 如何“记住”上下文）</h4>
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant U as 用户
+  participant FE as 前端
+  participant API as FastAPI /agent/ask
+  participant A as ReAct Agent
+  participant LLM as MiniMax-M3
+  participant T as 工具白名单
+  participant DB as 存储层（MySQL）
+
+  U->>FE: 提问（可省略主语，如“它的风险呢”）
+  FE->>API: POST /api/v1/agent/ask （question + history）
+  API->>A: ask(question, history)
+  A->>A: 意图识别 + 解析/沿用历史股票代码
+  A->>A: 预取真实行情快照（防幻觉）
+  loop 最多 6 步
+    A->>LLM: 历史 + 工具说明 + 上轮 Observation
+    LLM-->>A: Thought + Action(JSON)
+    A->>T: call_tool(name, args)
+    T->>DB: 查询
+    DB-->>T: observation
+    T-->>A: observation
+  end
+  A->>A: 合规改写 + 置信度 + 追问建议
+  A-->>API: answer + steps + citations + confidence
+  API-->>FE: JSON
+  FE->>U: 渲染回答 + 可点击追问
+</pre>
+  </div>
+  <div class="note">流式体验：综合报告等重任务通过 <code>on_stage</code> 回调把“准备→思考→调工具→渲染”进度经 SSE 推到前端，避免用户面对长等待黑屏。</div>
+</section>
+
+<!-- ============ 14 ============ -->
+<section id="interview">
+  <h2>14 · 面试讲述要点（可直接背的版本）</h2>
+  <h3>项目一句话</h3>
+  <p>“我做了一个 A 股量化投研工作台：底层用 Python 把多源金融数据接入到统一<b>存储层（关系库 MySQL + 向量库 Chroma）</b>，上层用<b>一个 ReAct 风格的大模型 Agent</b> 串起 13 个数据/分析工具和一套本地 RAG 知识库，让用户用自然语言对话就能完成查行情、读财报、做估值对比、跑回测、生成带引用的投研报告。”</p>
+
+  <h3>亮点（STAR 式）</h3>
+  <div class="grid g2">
+    <div class="card"><b>S</b> 投研信息分散、结论难复用溯源；且本机东财网络受限，部分数据源不可达。</div>
+    <div class="card"><b>T</b> 用 LLM Agent 统一入口；用双源改造保住数据覆盖；用护栏保证金融合规。</div>
+    <div class="card"><b>A</b> 设计白名单工具 + ReAct 循环 + 防幻觉预取 + 确定性置信度；RAG 本地重排溯源；模型路由降本；NL→代码回测沙箱。</div>
+    <div class="card"><b>R</b> 全市场约 5500 只股票可对话分析；财务数据双源冗余；所有回答带引用与免责声明，可审计。</div>
+  </div>
+
+  <h3>可能被追问 & 应对</h3>
+  <table>
+    <tr><th>追问</th><th>建议回答要点</th></tr>
+    <tr><td>为什么不用 LangChain/AutoGen？</td><td>早期就自己实现轻量 ReAct，工具/护栏/置信度完全可控、零框架黑盒；核心是“白名单 + 结构化 Observation + 出口统一兜底”，框架只是壳。</td></tr>
+    <tr><td>怎么防止 LLM 编造数据？</td><td>① 进推理前预取真实行情注入上下文；② 系统提示禁止凭记忆给数字；③ 护栏：声称缺数据却没调工具则强制回灌提示逼它取数；④ 结构化结果→人话改写。</td></tr>
+    <tr><td>RAG 召回怎么保证质量？</td><td>段落切片 + 本地 rerank（相似度阈值过滤 + 文档类型/标题重叠 boosting）+ 元数据过滤（stock_code/section）；引用能回链到具体文档章节。</td></tr>
+    <tr><td>成本和时延怎么优化？</td><td>模型路由：深度任务 M3、轻量任务 Flash；24h 响应缓存；置信度/引用/评分用确定性函数而非再调 LLM。</td></tr>
+    <tr><td>东财不可达怎么办？</td><td>双源改造：财务改用新浪 <code>stock_financial_abstract</code> 建独立新表 finance_abstract，<b>不动</b>原 finance_statement/finance_core，所以已有因子计算不受影响；市值暂冻结。</td></tr>
+    <tr><td>回测安全吗？</td><td>信号用受限 DSL（如 <code>close &gt; ma60</code>），自然语言经 LLM 翻译成策略代码后在 <b>AST 白名单沙箱</b>执行，禁止任意代码。</td></tr>
+  </table>
+
+  <div class="note good">收尾话术：<b>“这个项目让我把 LLM 应用从‘能对话’推进到‘可控、可溯源、可降级、可合规’的生产级形态——工具边界、幻觉护栏、成本控制、引用审计，每一块都有具体落地。”</b></div>
+</section>
+
+<footer>
+  本文档由项目代码自动梳理生成，聚焦 AI 大模型应用视角 · 架构图与流程图可在现代浏览器中直接渲染（Mermaid）。
+</footer>
+
+</div>
+
+<script>
+  // CDN 兜底：主脚本未加载时改用 unpkg，并重新初始化渲染
+  if (!window.mermaid) {
+    var s = document.createElement('script');
+    s.src = 'https://unpkg.com/mermaid@10/dist/mermaid.min.js';
+    s.onload = function () {
+      mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+      mermaid.run({ querySelector: '.mermaid' });
+    };
+    document.body.appendChild(s);
+  }
+</script>
+
+<!-- 缩放工具条：默认贴合宽度，可放大查看细节 -->
+<div class="zoom-bar">
+  <button title="缩小" onclick="__zoomOut()">−</button>
+  <span class="val" id="zoomVal">100%</span>
+  <button title="放大" onclick="__zoomIn()">＋</button>
+  <button title="适应宽度" onclick="__zoomReset()">适应宽度</button>
+</div>
+<script>
+  (function () {
+    var z = 1;
+    function apply() {
+      var svgs = document.querySelectorAll('.diagram svg');
+      for (var i = 0; i < svgs.length; i++) {
+        var s = svgs[i];
+        s.style.maxWidth = 'none';
+        s.style.width = (z * 100) + '%';
+        s.style.height = 'auto';
+      }
+      var lbl = document.getElementById('zoomVal');
+      if (lbl) lbl.textContent = Math.round(z * 100) + '%';
+    }
+    window.__setZoom = function (nz) { z = Math.min(4, Math.max(0.5, nz)); apply(); };
+    window.__zoomIn = function () { window.__setZoom(z + 0.25); };
+    window.__zoomOut = function () { window.__setZoom(z - 0.25); };
+    window.__zoomReset = function () { window.__setZoom(1); };
+    document.addEventListener('DOMContentLoaded', function () { setTimeout(apply, 500); });
+    document.addEventListener('keydown', function (e) {
+      if (e.altKey && (e.key === '+' || e.key === '=')) { e.preventDefault(); window.__zoomIn(); }
+      else if (e.altKey && e.key === '-') { e.preventDefault(); window.__zoomOut(); }
+      else if (e.altKey && e.key === '0') { e.preventDefault(); window.__zoomReset(); }
+    });
+  })();
+</script>
+</body>
+</html>

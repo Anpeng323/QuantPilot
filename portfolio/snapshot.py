@@ -23,6 +23,7 @@ class PositionSnapshot:
     open_date: str = ""
     note: str = ""
     status: str = "open"
+    industry: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return _asdict(self)
@@ -69,6 +70,8 @@ class PortfolioSnapshot:
 
     def compute(self) -> List[PositionSnapshot]:
         """计算所有 open 持仓的快照"""
+        from etl.industry import get_board_map
+        board = get_board_map()
         # 先看外部注入的价格，没有再查 DB
         external = self.prices
         # 仍然查询每只票各自的最新价，方便对比
@@ -108,6 +111,7 @@ class PortfolioSnapshot:
                 snap.market_value = round(cur * snap.quantity, 1)
                 snap.floating_pnl = round(snap.market_value - snap.cost_total, 1)
                 snap.return_pct = (snap.floating_pnl / snap.cost_total) if snap.cost_total > 0 else None
+            snap.industry = board.get(code, "")
             snaps.append(snap)
         return snaps
 

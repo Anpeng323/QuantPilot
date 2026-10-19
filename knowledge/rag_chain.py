@@ -4,6 +4,7 @@ RAG 完整链路：载入 → 切片 → embedding → 存向量库 → 检索 �
 from __future__ import annotations
 import uuid
 import json
+import re
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -14,7 +15,67 @@ from knowledge.chunker import chunk_segments, Chunk
 from knowledge.embedder import embed_texts, embed_query
 from knowledge.vector_store import upsert_chunks, delete_doc, query as vec_query
 from ai import client as llm
+from ai import router
 from ai.prompts import PROMPT_RAG
+
+
+def _tokenize(t: str) -> List[str]:
+    return [w for w in re.split(r"[\s,，。、.;；:：()（）\"']+", t or "")
+            if re.match(r"[\u4e00-\u9fffA-Za-z0-9]+", w)]
+
+
+def _rerank(results: List[Dict[str, Any]], query_text: str,
+            score_floor: float = 0.6, top_k: int = 5) -> List[Dict[str, Any]]:
+    """本地 rerank（不接付费服务）：相似度阈值过滤 + metadata 轻量 boosting 重排。
+
+    - 丢弃 similarity < score_floor 的片段（降噪）
+    - boosting：report/announcement 权重更高；标题/section 词重叠越多加分越多
+    """
+    if not results:
+        return []
+    q_tok = set(_tokenize(query_text))
+    boosted = []
+    for r in results:
+        s = r.get("score", 0)
+        if s < score_floor:
+            continue
+        boost = 0.0
+        dt = r.get("doc_type", "") or ""
+        if dt in ("report", "announcement"):
+            boost += 0.06
+        elif dt in ("research", "note"):
+            boost += 0.03
+        title = r.get("section") or r.get("title") or ""
+        overlap = len(q_tok & set(_tokenize(title))) if q_tok else 0
+        boost += min(overlap * 0.02, 0.1)
+        boosted.append((r, min(s + boost, 1.0)))
+    boosted.sort(key=lambda x: x[1], reverse=True)
+    out = []
+    for r, sc in boosted[:top_k]:
+        r = dict(r)
+        r["score"] = round(sc, 4)
+        out.append(r)
+    return out
+
+
+def _enrich_docs(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """补充 doc 表里的标题/发布日期，供前端来源标注展开。"""
+    doc_ids = list({r.get("doc_id") for r in results if r.get("doc_id")})
+    if not doc_ids:
+        return results
+    try:
+        rows = get_conn().execute(
+            "SELECT doc_id, title, publish_date FROM doc WHERE doc_id IN ({})".format(
+                ",".join("?" * len(doc_ids))), doc_ids).fetchall()
+        meta = {row[0]: {"title": row[1], "date": str(row[2] or "")} for row in rows}
+    except Exception:
+        return results
+    for r in results:
+        m = meta.get(r.get("doc_id"))
+        if m:
+            r["title"] = m["title"]
+            r["date"] = m["date"]
+    return results
 
 
 def ingest_file(file_path: str, doc_type: str = "pdf", source: str = "manual",
@@ -104,11 +165,21 @@ def query(question: str, stock_code: Optional[str] = None, top_k: int = 5,
     except Exception as e:
         return {"error": f"问题向量化失败: {e}"}
 
-    retrieved = vec_query(q_emb, top_k=top_k, stock_code=stock_code,
-                          stock_codes=stock_codes, doc_types=doc_types)
-    if not retrieved:
+    retrieved_raw = vec_query(q_emb, top_k=max(top_k * 3, 20), stock_code=stock_code,
+                              stock_codes=stock_codes, doc_types=doc_types)
+    if not retrieved_raw:
         return {
             "answer": "**知识库为空或未检索到相关内容**。请先上传 PDF/Word/Markdown 文档，或放宽检索条件。",
+            "citations": [],
+            "model": "none",
+            "duration_ms": 0,
+        }
+
+    # 本地 rerank + 来源补全
+    retrieved = _enrich_docs(_rerank(retrieved_raw, question, top_k=top_k))
+    if not retrieved:
+        return {
+            "answer": "**未检索到高相关内容**（相似度低于阈值）。请换一种问法或上传更对口的资料。",
             "citations": [],
             "model": "none",
             "duration_ms": 0,
@@ -124,24 +195,44 @@ def query(question: str, stock_code: Optional[str] = None, top_k: int = 5,
     prompt = Template(PROMPT_RAG).render(question=question, context=ctx)
 
     t0 = time.time()
-    resp = llm.chat([{"role": "user", "content": prompt}],
-                    model=model, temperature=0.2, max_tokens=2000)
+    try:
+        resp = router.chat_for_task(router.TASK_RAG_QA,
+                                    [{"role": "user", "content": prompt}],
+                                    temperature=0.2, max_tokens=2000)
+    except Exception as e:
+        return {
+            "answer": "**知识库检索完成，但大模型调用失败，请稍后重试。**",
+            "citations": [{
+                "chunk_id": r["chunk_id"], "doc_id": r["doc_id"],
+                "doc_type": r.get("doc_type", ""), "page": r["page"],
+                "section": r["section"], "stock_code": r["stock_code"],
+                "score": r["score"], "text_preview": r["text"][:200],
+            } for r in retrieved],
+            "model": "none", "tokens": 0, "duration_ms": int((time.time() - t0) * 1000),
+            "degraded": True,
+        }
     dur = int((time.time() - t0) * 1000)
+    top_score = max((r["score"] for r in retrieved), default=0.0)
+    confidence = round(min(0.99, max(0.3, top_score)), 2)
 
     return {
         "answer": resp["text"],
         "citations": [{
             "chunk_id": r["chunk_id"],
             "doc_id": r["doc_id"],
+            "doc_type": r.get("doc_type", ""),
             "page": r["page"],
             "section": r["section"],
             "stock_code": r["stock_code"],
+            "title": r.get("title", ""),
+            "date": r.get("date", ""),
             "score": r["score"],
             "text_preview": r["text"][:200],
         } for r in retrieved],
         "model": resp["model"],
         "tokens": resp["total_tokens"],
         "duration_ms": dur,
+        "confidence": confidence,
     }
 
 
@@ -186,11 +277,13 @@ def compare(stock_codes: List[str], question: str, top_k: int = 4,
         q_emb = embed_query(question)
     except Exception as e:
         return {"error": f"问题向量化失败: {e}"}
-    retrieved = vec_query(
-        q_emb, top_k=max(3, top_k * len(stock_codes)),
+    retrieved_raw = vec_query(
+        q_emb, top_k=max(12, top_k * len(stock_codes) * 2),
         stock_codes=stock_codes,
         doc_types=["report", "announcement", "research", "note"],
     )
+    retrieved = _enrich_docs(_rerank(retrieved_raw, question,
+                                     score_floor=0.6, top_k=top_k * len(stock_codes)))
     ctx_parts = []
     for i, r in enumerate(retrieved, 1):
         ctx_parts.append(
@@ -204,16 +297,30 @@ def compare(stock_codes: List[str], question: str, top_k: int = 4,
         table=table_ctx, context=ctx, question=question)
 
     t0 = time.time()
-    resp = llm.chat([{"role": "user", "content": prompt}],
-                    model=model, temperature=0.3, max_tokens=2200)
+    try:
+        resp = router.chat_for_task(router.TASK_RAG_QA,
+                                    [{"role": "user", "content": prompt}],
+                                    temperature=0.3, max_tokens=2200)
+    except Exception as e:
+        return {
+            "answer": f"**对比分析失败（大模型调用异常）：{e}**",
+            "citations": [], "stock_codes": stock_codes,
+            "model": "none", "tokens": 0, "duration_ms": int((time.time() - t0) * 1000),
+            "degraded": True,
+        }
     dur = int((time.time() - t0) * 1000)
+    top_score = max((r["score"] for r in retrieved), default=0.0)
+    confidence = round(min(0.99, max(0.3, top_score)), 2)
 
     return {
         "answer": resp["text"],
         "citations": [{
             "chunk_id": r["chunk_id"],
             "doc_id": r["doc_id"],
+            "doc_type": r.get("doc_type", ""),
             "stock_code": r["stock_code"],
+            "title": r.get("title", ""),
+            "date": r.get("date", ""),
             "page": r["page"],
             "score": r["score"],
             "text_preview": r["text"][:200],
@@ -221,5 +328,6 @@ def compare(stock_codes: List[str], question: str, top_k: int = 4,
         "model": resp["model"],
         "tokens": resp["total_tokens"],
         "duration_ms": dur,
+        "confidence": confidence,
         "stock_codes": stock_codes,
     }

@@ -6,9 +6,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import pandas as pd
 from jinja2 import Template
 from etl.db import get_conn
-from ai import client as llm
 from ai.prompts import PROMPT_FINANCIAL
-from ai.analyzers.base import stock_basic, save_analysis, _fmt_table
+from ai.analyzers.base import stock_basic, _fmt_table
+from ai import router
+from ai.structured import run_simple
 
 
 def build_context(stock_code: str) -> tuple:
@@ -98,22 +99,5 @@ def run(stock_code: str, save: bool = True) -> dict:
     tpl = Template(PROMPT_FINANCIAL)
     prompt = tpl.render(stock_code=info["stock_code"], short_name=info["short_name"],
                         financial_context=ctx)
-    t0 = __import__("time").time()
-    resp = llm.chat([{"role": "user", "content": prompt}],
-                    temperature=0.3, max_tokens=2000)
-    dur = int((__import__("time").time() - t0) * 1000)
-    cost = llm.estimate_cost(resp["input_tokens"], resp["output_tokens"], resp["model"])
-    aid = None
-    if save:
-        aid = save_analysis(stock_code, "financial_summary", prompt, resp["text"],
-                            resp["model"], resp["total_tokens"], cost, dur)
-    return {
-        "analysis_id": aid,
-        "stock_code": stock_code,
-        "type": "financial_summary",
-        "response": resp["text"],
-        "model": resp["model"],
-        "tokens": resp["total_tokens"],
-        "cost_cny": cost,
-        "duration_ms": dur,
-    }
+    return run_simple(router.TASK_FINANCIAL, stock_code, prompt, save,
+                      temperature=0.3, max_tokens=2000, atype="financial_summary")

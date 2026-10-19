@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import hashlib
 import threading
 from typing import List, Dict, Any
 from openai import OpenAI  # 顶层 import 确保可用
@@ -86,25 +87,88 @@ def _client_and_model():
     return None, None
 
 
+# ---------- 响应缓存（按 模型+消息指纹，TTL 24h，省 token） ----------
+# 仅 live 模式生效；设置 DISABLE_LLM_CACHE=1 可关闭（便于回归比对）。
+_CACHE: Dict[str, Any] = {}
+_CACHE_TTL = 24 * 3600
+
+
+def _cache_key(model: str, messages: List[Dict[str, str]]) -> str:
+    h = hashlib.sha256()
+    h.update(model.encode("utf-8"))
+    for m in messages:
+        h.update((m.get("role", "") + "\u0001" + (m.get("content") or "")).encode("utf-8"))
+    return h.hexdigest()
+
+
+def _cache_get(key: str):
+    if os.environ.get("DISABLE_LLM_CACHE"):
+        return None
+    v = _CACHE.get(key)
+    if v and (time.time() - v[1]) < _CACHE_TTL:
+        return v[0]
+    return None
+
+
+def _cache_put(key: str, val: Dict[str, Any]) -> None:
+    if os.environ.get("DISABLE_LLM_CACHE"):
+        return
+    # 防止缓存无限增长：超 2000 条时清空旧缓存
+    if len(_CACHE) > 2000:
+        _CACHE.clear()
+    _CACHE[key] = (val, time.time())
+
+
 def _call_live(messages: List[Dict[str, str]], model: str = None,
-               temperature: float = 0.3, max_tokens: int = 2048) -> Dict[str, Any]:
+               temperature: float = 0.3, max_tokens: int = 2048,
+               timeout: int = 30) -> Dict[str, Any]:
+    """真实模型调用：带超时 + 指数退避重试（2 次）；命中缓存直接返回；
+    全部失败则降级返回（degraded=True），交上层 try 包裹，不抛异常。"""
     client, default_model = _client_and_model()
     model = model or default_model
 
-    resp = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    txt = resp.choices[0].message.content
-    usage = resp.usage
+    key = _cache_key(model, messages)
+    cached = _cache_get(key)
+    if cached is not None:
+        return dict(cached, model=model, cached=True)
+
+    last_err: Exception | None = None
+    for attempt in range(3):  # 1 次 + 2 次重试
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            txt = resp.choices[0].message.content
+            usage = resp.usage
+            # 空内容（HTTP 200 但模型返回空串）视为失败，触发重试而非返回空
+            if not (txt or "").strip():
+                raise RuntimeError("LLM 返回空内容，触发重试")
+            result = {
+                "text": txt,
+                "model": model,
+                "input_tokens": usage.prompt_tokens if usage else 0,
+                "output_tokens": usage.completion_tokens if usage else 0,
+                "total_tokens": usage.total_tokens if usage else 0,
+            }
+            _cache_put(key, result)
+            return result
+        except Exception as e:  # noqa: BLE001 - 统一兜底，避免单点失败崩进程
+            last_err = e
+            if attempt < 2:
+                time.sleep(1.5 ** attempt)  # 1.5s / 2.25s 退避，规避 MiniMax 限流
+
+    # 重试耗尽 → 降级短文（上层按 degraded 处理）
     return {
-        "text": txt,
+        "text": f"（模型调用失败：{type(last_err).__name__}，已降级返回）",
         "model": model,
-        "input_tokens": usage.prompt_tokens if usage else 0,
-        "output_tokens": usage.completion_tokens if usage else 0,
-        "total_tokens": usage.total_tokens if usage else 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "degraded": True,
     }
 
 

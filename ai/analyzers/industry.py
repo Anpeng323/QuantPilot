@@ -5,9 +5,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from jinja2 import Template
 from etl.db import get_conn
-from ai import client as llm
 from ai.prompts import PROMPT_INDUSTRY
-from ai.analyzers.base import stock_basic, save_analysis, _fmt_table
+from ai.analyzers.base import stock_basic, _fmt_table
+from ai import router
+from ai.structured import run_simple
 
 
 def _industry_name(stock_code: str) -> str:
@@ -112,12 +113,5 @@ def run(stock_code: str, save: bool = True) -> dict:
     tpl = Template(PROMPT_INDUSTRY)
     prompt = tpl.render(stock_code=info["stock_code"], short_name=info["short_name"],
                         industry_name=industry, industry_context=ctx)
-    t0 = __import__("time").time()
-    resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=1600)
-    dur = int((__import__("time").time() - t0) * 1000)
-    cost = llm.estimate_cost(resp["input_tokens"], resp["output_tokens"], resp["model"])
-    aid = save_analysis(stock_code, "industry", prompt, resp["text"],
-                        resp["model"], resp["total_tokens"], cost, dur) if save else None
-    return {"analysis_id": aid, "stock_code": stock_code, "type": "industry",
-            "response": resp["text"], "model": resp["model"],
-            "tokens": resp["total_tokens"], "cost_cny": cost, "duration_ms": dur}
+    return run_simple(router.TASK_INDUSTRY, stock_code, prompt, save,
+                      temperature=0.3, max_tokens=1600, atype="industry")

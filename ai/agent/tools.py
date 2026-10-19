@@ -4,6 +4,7 @@
 工具列表（spec 02 §3.3）：
 - get_quote          行情/技术指标
 - get_financials     财务三表/估值
+- get_financial_abstract  新浪财务摘要（替代东财源）
 - compare_stocks     多股对比
 - rag_retrieve       知识库检索
 - summarize_filing   长文档摘要（基于 RAG 上下文）
@@ -82,6 +83,57 @@ def _fn_get_financials(stock_code: str, report_type: str = None) -> Dict[str, An
     data = {cols[i]: row[i] for i in range(len(cols))}
     data.pop("stock_code", None)
     return {"stock_code": code, "report_date": data.get("report_date"), "financials": data}
+
+
+def _fn_get_financial_abstract(stock_code: str, indicator: str = None) -> Dict[str, Any]:
+    """新浪财务摘要（替代东财源，独立表 finance_abstract）。
+
+    - 不传 indicator：返回最新报告期各分类指标快照（按 常用/每股/盈利/成长/收益质量/财务风险/营运能力 分组）+ 可用报告期列表。
+    - 传 indicator（如 '净资产收益率(ROE)'）：返回该指标全部报告期时间序列。
+    数值为原始值（元 / % / 比率，依指标而定），未做单位换算。
+    """
+    codes = resolve_stock_codes(stock_code)
+    code = codes[0] if codes else None
+    if not code:
+        return {"error": "未识别到股票代码", "degraded": True}
+    conn = get_conn()
+    try:
+        dates = [r[0] for r in conn.execute(
+            "SELECT DISTINCT report_date FROM finance_abstract WHERE stock_code=? ORDER BY report_date DESC",
+            [code],
+        ).fetchall()]
+    except Exception:
+        return {"error": "财务摘要表 finance_abstract 不可用", "degraded": True}
+    if not dates:
+        return {"error": f"无 {code} 新浪财务摘要数据", "degraded": True}
+
+    if indicator:
+        rows = conn.execute(
+            "SELECT report_date, value FROM finance_abstract "
+            "WHERE stock_code=? AND indicator=? ORDER BY report_date",
+            [code, indicator],
+        ).fetchall()
+        return {
+            "stock_code": code,
+            "indicator": indicator,
+            "series": [{"report_date": str(d), "value": v} for d, v in rows],
+        }
+
+    latest = dates[0]
+    rows = conn.execute(
+        "SELECT category, indicator, value FROM finance_abstract "
+        "WHERE stock_code=? AND report_date=?",
+        [code, latest],
+    ).fetchall()
+    snapshot = {}
+    for cat, ind, val in rows:
+        snapshot.setdefault(cat, {})[ind] = val
+    return {
+        "stock_code": code,
+        "latest_report_date": str(latest),
+        "report_dates": [str(d) for d in dates],
+        "snapshot": snapshot,
+    }
 
 
 def _fn_compare_stocks(codes: List[str], metrics: List[str] = None) -> Dict[str, Any]:
@@ -215,10 +267,13 @@ def _run_backtest_nl_fallback(desc: str, code: str, start: str, end: str,
     trades = r.get("trades", []) or []
     if len(trades) > 100:
         trades = trades[:100]
+    from etl.industry import get_board_map
+    _board = get_board_map()
     card = {
         "type": "backtest",
         "stock_code": code,
         "signal": desc,
+        "industry": _board.get(code, ""),
         "period": f"{start} ~ {end}",
         "metrics": {
             "total_return_pct": summary["total_return_pct"],
@@ -322,10 +377,13 @@ def _fn_run_backtest(stock_code: str, signal: str, start: str = None,
     trades = res.get("trades", []) or []
     if len(trades) > 100:
         trades = trades[:100]
+    from etl.industry import get_board_map
+    _board = get_board_map()
     card = {
         "type": "backtest",
         "stock_code": code,
         "signal": normalized,
+        "industry": _board.get(code, ""),
         "input_signal": signal if normalized != signal else None,
         "period": f"{start} ~ {end}",
         "metrics": {
@@ -543,6 +601,19 @@ TOOLS: Dict[str, Dict[str, Any]] = {
             "report_type": {"required": False, "type": "str", "desc": "报告类型（可选）"},
         },
         "fn": _fn_get_financials,
+    },
+    "get_financial_abstract": {
+        "description": "查询股票新浪财务摘要（替代东财源，独立表 finance_abstract）。"
+                       "省略 indicator 时返回最新报告期各分类指标快照"
+                       "（常用/每股/盈利/成长/收益质量/财务风险/营运能力）及可用报告期列表；"
+                       "传入 indicator（如 '净资产收益率(ROE)'）则返回该指标全部报告期时间序列。"
+                       "数值为原始值（元/%、比率，依指标而定）。",
+        "params": {
+            "stock_code": {"required": True, "type": "str", "desc": "股票代码或名称"},
+            "indicator": {"required": False, "type": "str",
+                          "desc": "指定指标名返回时间序列；省略则返回最新期分类快照"},
+        },
+        "fn": _fn_get_financial_abstract,
     },
     "compare_stocks": {
         "description": "横向对比多只股票的财务与估值指标（PE/PB/ROE/毛利率等）",

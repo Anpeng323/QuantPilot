@@ -195,6 +195,7 @@ async function loadSnapRows() {
             return `<tr>
                 <td><code>${r.code}</code></td>
                 <td>${r.name || ''}</td>
+                <td class="muted">${r.industry || '-'}</td>
                 <td><span class="info">${r.exchange || ''}</span></td>
                 <td class="num">${fmt.num(r.close, 2)}</td>
                 <td class="num ${cls}">${fmt.num(r.change, 2)}</td>
@@ -203,18 +204,21 @@ async function loadSnapRows() {
                 <td class="num">${fmt.num((r.amount||0)/1e8, 3)}</td>
             </tr>`;
         }).join('');
-        $('#snap-tbody').html(html || '<tr><td colspan="8" class="text-muted text-center" style="padding:40px">无数据</td></tr>');
+        $('#snap-tbody').html(html || '<tr><td colspan="9" class="text-muted text-center" style="padding:40px">无数据</td></tr>');
         const totalPages = Math.ceil((data.total || 0) / snapPageSize);
-        $('#snap-pages').text(`/ 共 ${totalPages} 页 · ${data.total} 条`);
+        const boardTip = (data.boards && data.boards.length)
+            ? ` · 板块「${data.boards.join('、')}」` : '';
+        $('#snap-pages').text(`/ 共 ${totalPages} 页 · ${data.total} 条${boardTip}`);
     } catch (e) {
-        $('#snap-tbody').html(`<tr><td colspan="8" class="err">${e.message}</td></tr>`);
+        $('#snap-tbody').html(`<tr><td colspan="9" class="err">${e.message}</td></tr>`);
     }
 }
 
 // ============================================================
 // 股票搜索自动联想（拼音首字母 / 中文 / 代码 模糊）
 // ============================================================
-function enableStockSuggest(sel, onPick) {
+function enableStockSuggest(sel, onPick, opts = {}) {
+    const withBoards = !!opts.withBoards;   // 是否同时联想「板块」（仅全市场行情搜索框需要）
     const $input = $(sel);
     if (!$input.length) return;
     const $box = $('<div class="suggest-box"></div>');
@@ -222,16 +226,21 @@ function enableStockSuggest(sel, onPick) {
     let timer = null;
 
     function hide() { $box.hide(); }
-    function render(list) {
-        if (!list || !list.length) { hide(); return; }
+    function render(list, boards) {
         $box.empty();
-        list.forEach(s => {
+        (boards || []).forEach(b => {
+            $('<div class="suggest-item suggest-board"></div>')
+                .html(`<span class="sc">板块</span> <span class="sn">${b.name}</span> <span class="muted">${b.count} 只</span>`)
+                .on('mousedown', e => { e.preventDefault(); onPick({ kind: 'board', board_name: b.name }); hide(); })
+                .appendTo($box);
+        });
+        (list || []).forEach(s => {
             $('<div class="suggest-item"></div>')
-                .html(`<span class="sc">${s.stock_code}</span> <span class="sn">${s.short_name}</span>`)
+                .html(`<span class="sc">${s.stock_code}</span> <span class="sn">${s.short_name}</span> <span class="muted">${s.industry || ''}</span>`)
                 .on('mousedown', e => { e.preventDefault(); onPick(s); hide(); })
                 .appendTo($box);
         });
-        $box.show();
+        if ($box.children().length) $box.show(); else hide();
     }
 
     $input.on('input', () => {
@@ -240,8 +249,8 @@ function enableStockSuggest(sel, onPick) {
         if (!q) { hide(); return; }
         timer = setTimeout(async () => {
             try {
-                const d = await api.get(`/api/stock/search?q=${encodeURIComponent(q)}&limit=12`);
-                render(d.results);
+                const d = await api.get(`/api/stock/search?q=${encodeURIComponent(q)}&limit=12${withBoards ? '&boards=1' : ''}`);
+                render(d.results, withBoards ? d.boards : null);
             } catch (e) { hide(); }
         }, 180);
     });
@@ -287,6 +296,11 @@ function renderStockMetrics(info) {
         <div class="metric-card">
             <div class="metric-label">最新交易日</div>
             <div class="metric-value" style="font-size:18px">${info.last_date || '-'}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">板块</div>
+            <div class="metric-value" style="font-size:18px">${info.industry || '-'}</div>
+            <div class="metric-delta">所属行业</div>
         </div>
     `;
     $('#stock-metrics').html(html);
@@ -366,6 +380,14 @@ async function renderStockFactors() {
     }
 }
 
+// 从行业记录按后端同口径推导「板块」名：
+// 申万一级 > 申万二级 > 国民经济二级 > 国民经济一级
+function _boardFromIndustries(inds) {
+    inds = inds || [];
+    const pick = t => (inds.find(i => i.industry_type === t) || {}).industry_name;
+    return pick('申万一级') || pick('申万二级') || pick('二级') || pick('一级') || '-';
+}
+
 // 概览 Tab：基础信息 + 最新行情 + 区间统计 + 估值/行业/因子快照
 async function renderStockOverview() {
     if (!state.stockCode) return;
@@ -379,11 +401,12 @@ async function renderStockOverview() {
         const numOr = (v, dp = 2) => (v === null || v === undefined) ? '-' : fmt.num(v, dp);
         const pctOr = v => (v === null || v === undefined) ? '-' : fmt.num(v, 2) + '%';
 
-        let html = _sectionTitle('基础信息') + '<div class="card-grid card-grid-4">' +
+        let html = _sectionTitle('基础信息') + '<div class="card-grid card-grid-5">' +
             _metricCard('代码', d.stock_code, d.exchange || '') +
             _metricCard('名称', d.short_name || '-', `上市：${d.list_date || '-'}`) +
             _metricCard('最新交易日', q.trade_date || '-') +
             _metricCard('最新收盘', numOr(q.close), fmt.pct(q.change_pct)) +
+            _metricCard('板块', _boardFromIndustries(d.industries)) +
             '</div>';
 
         html += _sectionTitle('最新行情') + '<div class="card-grid card-grid-4">' +
@@ -957,48 +980,46 @@ async function runSQL() {
 // ============================================================
 // 🤖 AI 分析
 // ============================================================
+const AI_TYPE_LABELS = {
+    comprehensive: '综合投研报告', financial_summary: '财报解读', valuation: '估值测算',
+    risk_scan: '风险扫描', sentiment: '研报观点汇总', industry: '行业景气',
+    macro: '宏观解读', comparative: '横向对比', dcf: 'DCF 估值', profit: '盈利拆解',
+};
+function typeLabel(t) { return AI_TYPE_LABELS[t] || t; }
+
 async function runAI() {
     const stock = $('#ai-stock').val().trim();
-    if (!stock) { alert('请输入股票'); return; }
+    const type = $('#ai-type').val();
+    if (!stock && type !== 'macro') { alert('请输入股票'); return; }
     $('#ai-status').html('<span class="spinner"></span> 生成中...');
     $('#ai-result').text('');
     $('#ai-exports').hide();
     $('#ai-progress').show();
     $('#ai-steps').empty();
-    setAIProgress('prepare', `📊 已接收 ${stock}，准备生成综合报告…`, 5);
-    try {
-        const resp = await fetch('/api/v1/ai/analyze/comprehensive/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stock_code: stock }),
-        });
-        if (!resp.ok) throw new Error(`/ai/analyze/comprehensive/stream: ${resp.status}`);
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buf = '', data = null;
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            // SSE：每条以空行分隔
-            let idx;
-            while ((idx = buf.indexOf('\n\n')) !== -1) {
-                const chunk = buf.slice(0, idx);
-                buf = buf.slice(idx + 2);
-                const ev = parseSSE(chunk);
-                if (!ev) continue;
-                if (ev.event === 'stage') {
-                    setAIProgress(ev.data.stage, ev.data.label, ev.data.pct);
-                } else if (ev.event === 'result') {
-                    data = ev.data;
-                    setAIProgress('render', '✅ 综合报告生成完成', 100);
-                } else if (ev.event === 'error') {
-                    throw new Error(ev.data.message || '分析失败');
-                }
-            }
+    _aiSteps.length = 0;
+    setAIProgress('prepare', `📊 已接收 ${stock || '市场'}（${typeLabel(type)}）…`, 5);
+
+    let url, body;
+    if (type === 'comprehensive' || type === 'macro') {
+        url = '/api/v1/ai/analyze/comprehensive/stream';
+        body = { stock_code: stock };
+    } else {
+        url = '/api/v1/ai/analyze/stream';
+        body = { stock_code: stock, analysis_type: type };
+        if (type === 'comparative') {
+            const extra = $('#ai-stock2').val().trim();
+            const codes = [stock, ...extra.split(/[,，]/).map(s => s.trim()).filter(Boolean)];
+            if (codes.length < 2) { alert('对比模式需至少 2 只股票（主股票 + 对比股票）'); return; }
+            body.stock_codes = codes;
         }
+    }
+    try {
+        const data = await streamSSE(url, body, (ev) => {
+            if (ev.event === 'stage') setAIProgress(ev.data.stage, ev.data.label, ev.data.pct);
+            else if (ev.event === 'error') throw new Error(ev.data.message || '分析失败');
+        });
         if (!data) throw new Error('未收到分析结果');
-        $('#ai-result').html(md2html(data.response || data.analysis || '') + aiReportEnd());
+        $('#ai-result').html(renderAnalysisResult(data));
         state.aiAnalysisId = data.analysis_id;
         if (state.aiAnalysisId) $('#ai-exports').show();
         $('#ai-status').text(data.degraded ? '⚠️ 部分完成' : '✅ 完成');
@@ -1007,6 +1028,78 @@ async function runAI() {
         $('#ai-status').text('❌ 失败');
         $('#ai-progress').hide();
         $('#ai-result').html(`<div class="err">${e.message}</div>`);
+    }
+}
+
+// 通用 SSE 流式读取：返回最终 result 事件数据
+async function streamSSE(url, body, onEvent) {
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!resp.ok) throw new Error(`${url}: ${resp.status}`);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '', data = null;
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const chunk = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const ev = parseSSE(chunk);
+            if (!ev) continue;
+            if (ev.event === 'result') { data = ev.data; setAIProgress('render', '✅ 生成完成', 100); }
+            else if (onEvent) onEvent(ev);
+        }
+    }
+    return data;
+}
+
+// 渲染带结构化字段（评分 / 置信度 / 来源 / 模型成本）的分析结果
+function renderAnalysisResult(data) {
+    const resp = data.response || data.analysis || '';
+    let meta = '';
+    if (data.score != null || (data.confidence != null && data.confidence !== 0.3 && data.degraded !== true)) {
+        meta += '<div class="ai-meta">';
+        if (data.score != null) meta += `<span class="ai-score">综合评分 ${data.score}/100</span>`;
+        if (data.confidence != null) meta += `<span class="ai-conf">置信度 ${(data.confidence * 100).toFixed(0)}%</span>`;
+        meta += '</div>';
+    }
+    if (data.citations && data.citations.length) {
+        meta += '<div class="ai-cites">来源：' + data.citations.map(c =>
+            `<span class="cite-chip" title="${escAttr(c.ref || '')}">${escHtml(c.label || '')}</span>`).join('') + '</div>';
+    }
+    const cost = (typeof data.cost_cny === 'number') ? data.cost_cny.toFixed(4) : (data.cost_cny || 0);
+    const foot = `<div class="ai-foot">模型 ${escHtml(data.model || '-')} · Token ${data.tokens ?? 0} · ¥${cost}`
+        + (data.degraded ? ' · ⚠️ 降级' : '') + '</div>';
+    return meta + md2html(resp) + aiReportEnd() + foot;
+}
+
+function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function escAttr(s) { return escHtml(s); }
+
+// 渲染「置信度 + 来源标注」元信息（回测/选股/分析/Agent 统一复用，保证专业一致性）
+function renderConfCites($meta, $cites, data) {
+    const conf = data && data.confidence != null ? data.confidence : null;
+    const cites = (data && data.citations) || [];
+    if (conf != null && conf !== 0.3) {
+        $meta.html(`<span class="ai-conf">数据置信度 ${(conf * 100).toFixed(0)}%</span>`).show();
+    } else {
+        $meta.hide();
+    }
+    if (cites.length) {
+        $cites.html('来源：' + cites.map(c =>
+            `<span class="cite-chip" title="${escAttr(c.ref || '')}">${escHtml(c.label || c.ref || '来源')}</span>`
+        ).join('')).show();
+    } else {
+        $cites.hide();
     }
 }
 
@@ -1106,8 +1199,8 @@ async function loadRagDocs() {
             $('#rag-docs-list').html('<div class="text-muted text-center" style="padding:40px">尚无文档 · 上传第一个 PDF 开始</div>');
             return;
         }
-        const html = `<table><thead><tr><th>标题</th><th>类型</th><th>股票</th><th>分块</th><th>入库时间</th></tr></thead><tbody>` +
-            rows.map(d => `<tr><td>${d.title || d.doc_id}</td><td>${d.doc_type || ''}</td><td>${d.stock_code || ''}</td><td>${d.chunk_count || 0}</td><td class="info">${d.ingested_at || ''}</td></tr>`).join('') +
+        const html = `<table><thead><tr><th>标题</th><th>类型</th><th>股票</th><th>板块</th><th>分块</th><th>入库时间</th></tr></thead><tbody>` +
+            rows.map(d => `<tr><td>${d.title || d.doc_id}</td><td>${d.doc_type || ''}</td><td>${d.stock_code || ''}</td><td class="muted">${d.industry || '-'}</td><td>${d.chunk_count || 0}</td><td class="info">${d.ingested_at || ''}</td></tr>`).join('') +
             `</tbody></table>`;
         $('#rag-docs-list').html(html);
     } catch (e) {}
@@ -1133,17 +1226,40 @@ async function uploadRag() {
 async function askRag() {
     const q = $('#rag-question').val().trim();
     if (!q) return;
+    const compareMode = $('#rag-compare-mode').is(':checked');
+    let body;
+    if (compareMode) {
+        const codes = $('#rag-compare-codes').val().trim().split(/[,，]/).map(s => s.trim()).filter(Boolean);
+        if (codes.length < 2) { alert('对比模式需至少 2 只股票'); return; }
+        body = { stock_codes: codes, question: q, top_k: parseInt($('#rag-topk').val()) };
+    } else {
+        body = { question: q, top_k: parseInt($('#rag-topk').val()),
+                 stock_code: $('#rag-stock').val().trim() || undefined };
+    }
     $('#rag-ask-status').html('<span class="spinner"></span> 思考中...');
     $('#rag-answer').text('');
     try {
-        const data = await api.post('/api/v1/rag/query', {
-            question: q, top_k: parseInt($('#rag-topk').val()),
-        });
-        let ans = md2html(data.answer || '');
+        const url = compareMode ? '/api/v1/rag/compare' : '/api/v1/rag/query';
+        const data = await api.post(url, body);
+        let ans = md2html(data.answer || '') + aiReportEnd();
         if (data.citations && data.citations.length) {
-            ans += '<h3>📎 引用来源</h3><ul>' + data.citations.map((c, i) =>
-                `<li>[${i+1}] ${c.doc_id} · page ${c.page} · 相似度 ${(c.score||0).toFixed(3)}</li>`
-            ).join('') + '</ul>';
+            ans += '<div class="chat-sources">📎 引用来源（点击展开）：' +
+                data.citations.map((c, i) =>
+                    `<span class="cite-chip" data-doc="${escNews(c.doc_id || '')}" `
+                    + `title="${escNews(c.title || c.doc_id || '')}">[${i + 1}] `
+                    + `${escNews((c.title || c.doc_id || '来源'))}${c.page ? ' · p.' + escNews(String(c.page)) : ''}</span>`
+                ).join('') + '</div>';
+            ans += '<details class="rag-cite-detail"><summary>查看原文片段</summary><ul>' +
+                data.citations.map((c, i) =>
+                    `<li><b>[${i + 1}]</b> ${escNews(c.title || c.doc_id || '')}`
+                    + `${c.date ? ' · ' + escNews(c.date) : ''}`
+                    + `${c.page ? ' · p.' + escNews(String(c.page)) : ''}`
+                    + ` · 相似度 ${(c.score || 0).toFixed(3)}`
+                    + `<div class="rag-preview">${escNews(c.text_preview || '')}</div></li>`
+                ).join('') + '</ul></details>';
+        }
+        if (data.confidence != null) {
+            ans += `<div class="ai-foot">检索置信度 ${(data.confidence * 100).toFixed(0)}% · 模型 ${escNews(data.model || '-')}</div>`;
         }
         $('#rag-answer').html(ans);
         $('#rag-ask-status').text('✅');
@@ -1243,11 +1359,20 @@ async function askAgent() {
                 `</div></div>`;
         }
 
-        if (data.sources && data.sources.length) {
+        if (data.citations && data.citations.length) {
+            html += '<div class="chat-sources">📎 数据来源：' +
+                data.citations.map(c =>
+                    `<span class="cite-chip" data-doc="${escNews(c.ref || '')}" title="${escNews(c.label || '')}">${escNews(c.label || c.ref || '来源')}</span>`
+                ).join('') + '</div>';
+        } else if (data.sources && data.sources.length) {
             const list = data.sources.map(s =>
                 `${escNews(s.doc_id || '')}${s.page ? '（p.' + escNews(String(s.page)) + '）' : ''}`
             ).join('、');
             html += `<div class="chat-sources">📎 数据来源（${data.sources.length}）：${list}</div>`;
+        }
+
+        if (data.investment_view) {
+            html += `<div class="chat-advice">💡 AI 观点，仅供参考 · 不构成投资建议</div>`;
         }
 
         if (data.degraded) {
@@ -1299,9 +1424,10 @@ function renderAgentBacktestCard(c, $container) {
     ].join('');
 
     const chartId = 'agent-bt-chart-' + (++_agentCardSeq);
+    const board = c.industry ? `（${escNews(c.industry)}）` : '';
     const sub = c.input_signal
-        ? `${escNews(c.stock_code)} · 信号 ${escNews(c.signal)} <span class="text-muted">（原始：${escNews(c.input_signal)}）</span>`
-        : `${escNews(c.stock_code)} · 信号 ${escNews(c.signal)}`;
+        ? `${escNews(c.stock_code)}${board} · 信号 ${escNews(c.signal)} <span class="text-muted">（原始：${escNews(c.input_signal)}）</span>`
+        : `${escNews(c.stock_code)}${board} · 信号 ${escNews(c.signal)}`;
     const period = c.period ? `<span class="text-muted"> · ${escNews(c.period)}</span>` : '';
 
     const tradesHtml = renderAgentBtTrades(c.trades);
@@ -1394,11 +1520,12 @@ async function loadWatchlistItems(group) {
         const data = await api.get(`/api/v1/watchlist/${group}`);
         const rows = data.items || data || [];
         const html = `<table>
-            <thead><tr><th>代码</th><th>名称</th><th>备注</th><th>操作</th></tr></thead>
+            <thead><tr><th>代码</th><th>名称</th><th>板块</th><th>备注</th><th>操作</th></tr></thead>
             <tbody>${rows.map(it => `
                 <tr>
                     <td><code>${it.stock_code}</code></td>
                     <td>${it.short_name || ''}</td>
+                    <td class="muted">${it.industry || '-'}</td>
                     <td>${it.note || ''}</td>
                     <td><button class="del-wl" data-code="${it.stock_code}" class="danger">删除</button></td>
                 </tr>
@@ -1466,12 +1593,13 @@ async function loadPortfolio() {
             return;
         }
         const html = `<table>
-            <thead><tr><th>代码</th><th>名称</th><th class="num">成本</th><th class="num">数量</th><th class="num">现价</th><th class="num">市值</th><th class="num">盈亏</th><th class="num">收益率</th></tr></thead>
+            <thead><tr><th>代码</th><th>名称</th><th>板块</th><th class="num">成本</th><th class="num">数量</th><th class="num">现价</th><th class="num">市值</th><th class="num">盈亏</th><th class="num">收益率</th></tr></thead>
             <tbody>${rows.map(r => {
                 const cls = r.floating_pnl >= 0 ? 'up' : 'down';
                 return `<tr>
                     <td><code>${r.stock_code}</code></td>
                     <td>${r.short_name || ''}</td>
+                    <td class="muted">${r.industry || '-'}</td>
                     <td class="num">${fmt.num(r.cost_price, 3)}</td>
                     <td class="num">${r.quantity}</td>
                     <td class="num">${r.current_price === null ? '-' : fmt.num(r.current_price, 2)}</td>
@@ -1508,10 +1636,11 @@ async function loadAlerts() {
         const data = await api.get('/api/v1/alerts/rules');
         const rules = data || [];
         $('#alert-rules-list').html(rules.length ? `<table>
-            <thead><tr><th>名称</th><th>目标</th><th>指标</th><th>条件</th><th>阈值</th><th>状态</th><th>操作</th></tr></thead>
+            <thead><tr><th>名称</th><th>目标</th><th>板块</th><th>指标</th><th>条件</th><th>阈值</th><th>状态</th><th>操作</th></tr></thead>
             <tbody>${rules.map(r => `<tr>
                 <td>${r.name}</td>
                 <td>${r.target_value}</td>
+                <td class="muted">${r.industry || '-'}</td>
                 <td>${r.metric}</td>
                 <td>${r.operator}</td>
                 <td class="num">${r.threshold}</td>
@@ -1526,11 +1655,12 @@ async function loadAlerts() {
 
         const events = await api.get('/api/v1/alerts/events');
         $('#alert-events-list').html(events.length ? `<table>
-            <thead><tr><th>时间</th><th>规则</th><th>股票</th><th>指标</th><th>值</th><th>消息</th></tr></thead>
+            <thead><tr><th>时间</th><th>规则</th><th>股票</th><th>板块</th><th>指标</th><th>值</th><th>消息</th></tr></thead>
             <tbody>${events.map(e => `<tr>
                 <td>${e.triggered_at || ''}</td>
                 <td>${e.rule_id}</td>
                 <td><code>${e.stock_code}</code></td>
+                <td class="muted">${e.industry || '-'}</td>
                 <td>${e.metric}</td>
                 <td class="num">${e.value}</td>
                 <td>${e.message}</td>
@@ -1574,7 +1704,7 @@ async function loadNotes() {
         $('#notes-list').html(list.length ? list.map(n => `
             <div class="note-item" data-id="${n.note_id}">
                 <div>${n.title || '(无标题)'}</div>
-                <div class="note-item-meta">${n.stock_code || '通用'} · ${n.updated_at ? n.updated_at.substring(0,16) : ''}</div>
+                <div class="note-item-meta">${n.stock_code || '通用'}${n.industry ? ' · ' + n.industry : ''} · ${n.updated_at ? n.updated_at.substring(0,16) : ''}</div>
             </div>
         `).join('') : '<div class="text-muted" style="padding:12px">无笔记</div>');
         $('.note-item').on('click', function() {
@@ -1697,7 +1827,7 @@ function newsCardHtml(n) {
     const src = (n.source || 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '');
     const srcLabel = SRC_LABELS[n.source] || n.source || '未知';
     const badge = `<span class="source-badge ${src}">${escNews(srcLabel)}</span>`;
-    const stockTag = n.stock_code ? `<span class="stock-tag">${escNews(n.stock_code)}</span>` : '';
+    const stockTag = n.stock_code ? `<span class="stock-tag">${escNews(n.stock_code)}${n.industry ? ' · ' + escNews(n.industry) : ''}</span>` : '';
     const tag = n.tag ? `<span>🏷️ ${escNews(n.tag)}</span>` : '';
     // 有精确时间则显示到秒，否则回退到日期
     const when = n.publish_time ? String(n.publish_time).slice(0, 19) : (n.publish_date || '');
@@ -1811,11 +1941,11 @@ $(function() {
     $('#snap-search, #snap-exchange, #snap-sort, #snap-order').on('change keyup', function() {
         snapPage = 1; $('#snap-page').val(1); loadSnapRows();
     });
-    // 快照搜索自动联想：选中后填入代码并筛选
+    // 快照搜索自动联想：支持选中「个股」或「板块」（板块名直接作为查询词过滤）
     enableStockSuggest('#snap-search', s => {
-        $('#snap-search').val(s.stock_code);
+        $('#snap-search').val(s.kind === 'board' ? s.board_name : s.stock_code);
         snapPage = 1; $('#snap-page').val(1); loadSnapRows();
-    });
+    }, { withBoards: true });
     $('#snap-prev').on('click', () => { if (snapPage > 1) { snapPage--; $('#snap-page').val(snapPage); loadSnapRows(); }});
     $('#snap-next').on('click', () => { snapPage++; $('#snap-page').val(snapPage); loadSnapRows(); });
 
@@ -1894,6 +2024,7 @@ $(function() {
 
     // AI
     $('#ai-run').on('click', runAI);
+    $('#ai-type').on('change', () => $('#ai-stock2').toggle($('#ai-type').val() === 'comparative'));
     $('#ai-export-md').on('click', () => exportAI('md'));
     $('#ai-export-pdf').on('click', () => exportAI('pdf'));
 
@@ -1901,6 +2032,7 @@ $(function() {
     $('#rag-upload').on('click', uploadRag);
     $('#rag-ask').on('click', askRag);
     $('#rag-question').on('keypress', e => { if ((e.metaKey || e.ctrlKey) && e.which === 13) askRag(); });
+    $('#rag-compare-mode').on('change', () => $('#rag-compare-codes').toggle($('#rag-compare-mode').is(':checked')));
 
     // 模块4 · 智能问答 Agent（对话式）
     $('#agent-ask').on('click', askAgent);
@@ -1908,11 +2040,23 @@ $(function() {
         if (state.agentHistory.length && !confirm('清空当前对话？')) return;
         agentReset();
     });
-    // 点击推荐问题：填入输入框（不直接发送，留给用户修改后再发）
+    // 点击推荐问题：直接发送（直发）
     $('#agent-suggest').on('click', '.suggest-chip', function () {
         if (state.agentThinking) return;
-        const $q = $('#agent-q');
-        $q.val($(this).data('q')).trigger('input').focus();
+        const q = $(this).data('q');
+        if (!q) return;
+        $('#agent-q').val(q);
+        askAgent();
+    });
+
+    // 点击引用角标：跳转到 RAG 知识库并按 doc_id 检索
+    $(document).on('click', '.cite-chip[data-doc]', function () {
+        const doc = $(this).data('doc');
+        if (!doc) return;
+        const $tab = $('.tab-btn[data-tab="rag"]');
+        if ($tab.length) $tab.click();
+        const $s = $('#rag-search');
+        if ($s.length) { $s.val(String(doc)); if (typeof loadRagDocs === 'function') loadRagDocs(); }
     });
     // Enter 发送 / Shift+Enter 换行；输入框自动增高
     $('#agent-q')
@@ -2026,11 +2170,19 @@ $(function() {
             return;
         }
         $('#bt-status').text('');
+        renderBtResult(data);
+    }
+
+    // 渲染一次 NL 回测结果（runNlBacktest 与「用代码重跑」共用）
+    function renderBtResult(data) {
         setBtStep('gen', 'done');
         setBtStep('ast', data.ast_passed ? 'done' : 'fail');
         setBtStep('exec', data.executed ? 'done' : 'fail');
         setBtStep('bt', (data.executed && data.metrics) ? 'done' : 'fail');
-        $('#bt-code').text(data.generated_code || '（未生成代码）');
+        $('#bt-code').val(data.generated_code || '（未生成代码）');
+        $('#bt-rerun').show();
+        $('#bt-export').show();
+        window._btLastData = data;
         renderBtRules(data);
 
         if (data.error) {
@@ -2049,11 +2201,63 @@ $(function() {
         renderBtMetrics(data.metrics, trades, data);
         renderBtChart(data);
         renderBtTrades(trades);
+        renderConfCites($('#bt-meta'), $('#bt-cites'), data);
         let info = '';
         if (data.strategy_id) info = '已保存为策略 ' + data.strategy_id + (data.duplicate ? '（与已有策略重复，已去重）' : '');
         if (data.data_flag) info += (info ? '；' : '') + data.data_flag;
         $('#bt-strategy').text(info);
         loadSavedStrategies();
+    }
+
+    // 用编辑后的代码重跑（跳过 LLM 生成，直接走沙箱 + 回测引擎）
+    async function rerunWithCode() {
+        const stockRaw = $('#bt-stock').val().trim();
+        if (!stockRaw) { $('#bt-status').text('请填写股票代码'); return; }
+        const stock = await resolveBtStock(stockRaw);
+        const code = $('#bt-code').val();
+        if (!code.trim()) { $('#bt-status').text('代码为空'); return; }
+        $('#bt-status').text('用此代码重跑中…');
+        resetBtSteps();
+        setBtStep('gen', 'done');  // 已跳过生成
+        try {
+            const data = await api.post('/api/v1/backtest/nl/run_with_code', {
+                stock_code: stock, code,
+                days: parseInt($('#bt-days').val(), 10),
+                fill_price: $('#bt-fill').val(),
+                initial_cash: parseFloat($('#bt-cash').val()) || 100000,
+                benchmark: $('#bt-benchmark').val() || null,
+                save: $('#bt-save').is(':checked'),
+            });
+            $('#bt-status').text('');
+            renderBtResult(data);
+        } catch (e) {
+            $('#bt-status').text('');
+            $('#bt-error').show().text('重跑失败：' + e.message);
+        }
+    }
+
+    // 导出当前回测：JSON（含代码/指标/交易）+ CSV（交易明细）
+    function exportBacktest(fmt) {
+        const d = window._btLastData;
+        if (!d) { alert('请先运行一次回测'); return; }
+        if (fmt === 'json') {
+            const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
+            downloadBlob(blob, `backtest_${d.strategy_id || 'local'}.json`);
+        } else {
+            const trades = d.trades || [];
+            const cols = ['date', 'side', 'price', 'shares', 'amount'];
+            const rows = [cols.join(',')];
+            trades.forEach(t => rows.push(cols.map(c => JSON.stringify(t[c] ?? '')).join(',')));
+            const blob = new Blob(['\ufeff' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+            downloadBlob(blob, `backtest_${d.strategy_id || 'local'}_trades.csv`);
+        }
+    }
+
+    function downloadBlob(blob, name) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = name; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     function resetBtSteps() { $('#bt-steps .bt-step').removeClass('active done fail'); }
@@ -2093,14 +2297,23 @@ $(function() {
             excessVal = m.excess_return == null ? '-' : pct(m.excess_return);
             excessNote = '基准 ' + pct(benchTotal) + (BENCH_NAMES[benchCode] ? '（' + BENCH_NAMES[benchCode] + '）' : '');
         }
+        // 区间长度 / 买卖笔数：避免「年化被短区间放大」与「6 笔被误读成 6 个回合」
+        const curveLen = ((data || {}).equity_curve || []).length;
+        const buys = (trades || []).filter(t => t.side === 'buy').length;
+        const sells = (trades || []).filter(t => t.side === 'sell').length;
+        const annualNote = curveLen
+            ? `区间 ${curveLen} 个交易日（约 ${(curveLen / 252).toFixed(2)} 年）复利折算`
+            : '按 252 交易日复利折算';
+        const tradeNote = (trades && trades.length)
+            ? `${buys} 笔买入 / ${sells} 笔卖出` : '';
         const items = [
             ['总收益', pct(m.total_return), ''],
-            ['年化收益', pct(m.annual_return), '按 252 交易日复利折算'],
+            ['年化收益', pct(m.annual_return), annualNote],
             ['最大回撤', pct(m.max_drawdown), ''],
             ['夏普比率', m.sharpe == null ? '-' : m.sharpe.toFixed(2), '扣无风险利率 2.5%'],
             ['胜率', m.win_rate == null ? '-' : pct(m.win_rate), '已平仓交易'],
             ['超额收益', excessVal, excessNote],
-            ['交易次数', trades ? trades.length : (m.trade_count != null ? m.trade_count : '-'), ''],
+            ['交易次数', trades ? trades.length : (m.trade_count != null ? m.trade_count : '-'), tradeNote],
         ];
         $('#bt-metrics').html(items.map(([k, v, note]) =>
             `<div class="metric-card"><div class="metric-label">${k}</div><div class="metric-value">${v}</div>`
@@ -2413,12 +2626,134 @@ $(function() {
         $('#bt-status').text(`${s.stock_code} ${s.short_name || ''}`.trim());
     });
     $('#bt-copy').on('click', () => {
-        const t = $('#bt-code').text();
+        const t = $('#bt-code').val();
         if (navigator.clipboard) navigator.clipboard.writeText(t);
         $('#bt-copy').text('已复制');
         setTimeout(() => $('#bt-copy').text('复制'), 1200);
     });
+    $('#bt-rerun').on('click', rerunWithCode);
+    $('#bt-export').on('click', () => {
+        const fmt = confirm('确定导出 JSON？（取消则导出交易明细 CSV）') ? 'json' : 'csv';
+        exportBacktest(fmt);
+    });
     $('.nav-item[data-panel="bt"]').on('click', loadSavedStrategies);
+
+    // ===== 量化选股（自然语言全市场筛选）=====
+    let _scMatches = [];
+    let _scSort = { key: null, asc: true };
+
+    function _scPct(v) {
+        if (v == null) return '-';
+        const cls = v >= 0 ? 'up' : 'down';
+        const sign = v >= 0 ? '+' : '';
+        return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
+    }
+    function _scDebug(d) {
+        if (!d || !Object.keys(d).length) return '-';
+        return Object.entries(d).map(([k, v]) =>
+            `${escHtml(k)}=${typeof v === 'number' ? v.toFixed(2) : v}`).join('，');
+    }
+    function _scRender() {
+        const rows = _scMatches.slice();
+        if (_scSort.key) {
+            const k = _scSort.key, asc = _scSort.asc;
+            rows.sort((a, b) => {
+                let x = a[k], y = b[k];
+                if (typeof x === 'number' && typeof y === 'number') return asc ? x - y : y - x;
+                x = String(x ?? ''); y = String(y ?? '');
+                return asc ? x.localeCompare(y, 'zh') : y.localeCompare(x, 'zh');
+            });
+        }
+        if (!rows.length) {
+            $('#sc-results').html('<div class="text-muted text-center" style="padding:20px">无满足条件的股票</div>');
+            return;
+        }
+        const head = [['stock_code', '代码'], ['short_name', '名称'], ['industry', '板块'],
+            ['exchange', '交易所'], ['close', '现价'], ['pct_change', '涨跌幅'],
+            ['signal_debug', '触发信号(指标值)']];
+        const arrows = c => (_scSort.key === c ? (_scSort.asc ? ' ▲' : ' ▼') : '');
+        const th = head.map(([k, label]) =>
+            `<th class="sortable" data-key="${k}">${label}${arrows(k)}</th>`).join('');
+        const body = rows.map(m =>
+            `<tr data-code="${escHtml(m.stock_code)}" data-name="${escHtml(m.short_name)}">
+                <td>${escHtml(m.stock_code)}</td>
+                <td>${escHtml(m.short_name)}</td>
+                <td>${escHtml(m.industry || '-')}</td>
+                <td>${escHtml(m.exchange)}</td>
+                <td>${typeof m.close === 'number' ? m.close.toFixed(2) : '-'}</td>
+                <td>${_scPct(m.pct_change)}</td>
+                <td class="text-muted">${_scDebug(m.signal_debug)}</td>
+            </tr>`).join('');
+        $('#sc-results').html(`<table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`);
+        $('#sc-results thead .sortable').on('click', function () {
+            const k = $(this).data('key');
+            _scSort.asc = (_scSort.key === k) ? !_scSort.asc : true;
+            _scSort.key = k;
+            _scRender();
+        });
+        $('#sc-results tbody tr').on('click', function () {
+            const code = $(this).data('code');
+            const nl = $('#sc-nl').val().trim();
+            switchPanel('bt');
+            $('#bt-stock').val(code);
+            $('#bt-nl').val(nl);
+            $('#bt-status').text(`${code} ${$(this).data('name') || ''}`.trim());
+            runNlBacktest();
+        });
+    }
+
+    async function _scPoll(taskId) {
+        try {
+            const d = await api.get(`/api/v1/screener/status/${taskId}`);
+            if (d.status === 'running') {
+                const total = d.total || 0, scanned = d.scanned || 0;
+                const pct = total ? Math.round(scanned / total * 100) : 0;
+                $('#sc-progress-fill').css('width', pct + '%');
+                $('#sc-progress-text').text(`已扫描 ${scanned} / 共 ${total}` + (d.generated_code ? ' · 代码已生成，正在跑全市场…' : ' · 正在生成策略代码…'));
+                setTimeout(() => _scPoll(taskId), 900);
+                return;
+            }
+            $('#sc-progress-wrap').hide();
+            if (d.status === 'error') {
+                let msg = d.error || '扫描失败';
+                if (d.suggestions && d.suggestions.length) msg += '\n建议：' + d.suggestions.join('；');
+                $('#sc-error').show().text(msg);
+                return;
+            }
+            $('#sc-error').hide();
+            _scMatches = d.matches || [];
+            $('#sc-summary').text(`命中 ${_scMatches.length} 只` + (d.skipped ? `（跳过 ${d.skipped} 只数据不足/异常）` : ''));
+            renderConfCites($('#sc-meta'), $('#sc-cites'), d);
+            _scSort = { key: 'pct_change', asc: false };
+            _scRender();
+        } catch (e) {
+            $('#sc-progress-wrap').hide();
+            $('#sc-error').show().text('轮询失败：' + e.message);
+        }
+    }
+
+    async function runScreener() {
+        const nl = $('#sc-nl').val().trim();
+        if (!nl) { $('#sc-status').text('请输入选股描述'); return; }
+        $('#sc-error').hide();
+        $('#sc-summary').text('');
+        $('#sc-status').text('启动中…');
+        $('#sc-progress-wrap').show();
+        $('#sc-progress-fill').css('width', '0%');
+        $('#sc-progress-text').text('正在提交任务…');
+        $('#sc-results').html('');
+        try {
+            const r = await api.post('/api/v1/screener/run', { nl });
+            $('#sc-status').text('扫描中');
+            _scPoll(r.task_id);
+        } catch (e) {
+            $('#sc-progress-wrap').hide();
+            $('#sc-error').show().text('启动失败：' + e.message);
+        }
+    }
+
+    $('#sc-run').on('click', runScreener);
+    $('#sc-nl').on('keypress', e => { if (e.which === 13) runScreener(); });
 
     // 启动
     loadLLMStatus();

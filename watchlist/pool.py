@@ -49,11 +49,14 @@ def list_group_items(group_name: str) -> list:
         WHERE w.group_name = ?
         ORDER BY w.added_at DESC
     """, [group_name]).fetchall()
-    return [{
+    from etl.industry import enrich_with_board
+    items = [{
         "stock_code": r[0], "short_name": r[1] or "", "exchange": r[2] or "",
         "added_at": str(r[3]) if r[3] else "", "note": r[4] or "",
         "last_price": r[5], "last_pct": r[6],
     } for r in rows]
+    enrich_with_board(items)
+    return items
 
 
 def add_to_group(group_name: str, stock_code: str, note: str = "") -> dict:

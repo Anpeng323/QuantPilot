@@ -57,7 +57,9 @@ def fetch_date(date_str: str) -> list:
 def save_announcements(rows: list) -> int:
     if not rows:
         return 0
+    import json
     conn = get_conn()
+    pending = []
     n = 0
     for r in rows:
         url = r.get("url")
@@ -66,12 +68,21 @@ def save_announcements(rows: list) -> int:
         doc_id = hashlib.md5(url.encode()).hexdigest()[:16]
         if conn.execute("SELECT 1 FROM doc WHERE doc_id=?", [doc_id]).fetchone():
             continue
+        ann_type = r.get("ann_type", "") or ""
         conn.execute(
-            """INSERT INTO doc (doc_id, doc_type, source, stock_code, title, publish_date, url, chunk_count)
-               VALUES (?, 'announcement', 'eastmoney', ?, ?, ?, ?, 0)""",
-            [doc_id, r["stock_code"], r["title"], r["publish_date"], url],
+            """INSERT INTO doc (doc_id, doc_type, source, stock_code, title, publish_date, url, chunk_count, metadata)
+               VALUES (?, 'announcement', 'eastmoney', ?, ?, ?, ?, 0, ?)""",
+            [doc_id, r["stock_code"], r["title"], r["publish_date"], url,
+             json.dumps({"ann_type": ann_type}, ensure_ascii=False)],
         )
+        text = r["title"] + (f"\n类型：{ann_type}" if ann_type else "")
+        pending.append((doc_id, text, r["stock_code"], r["title"]))
         n += 1
+    if pending:
+        from knowledge.ingest import embed_batch
+        counts = embed_batch(pending, doc_type="announcement", source="eastmoney")
+        for (doc_id, _, _, _), cnt in zip(pending, counts):
+            conn.execute("UPDATE doc SET chunk_count=? WHERE doc_id=?", [cnt, doc_id])
     return n
 
 

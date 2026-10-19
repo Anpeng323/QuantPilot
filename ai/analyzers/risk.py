@@ -5,9 +5,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from jinja2 import Template
 from etl.db import get_conn
-from ai import client as llm
 from ai.prompts import PROMPT_RISK
-from ai.analyzers.base import stock_basic, save_analysis
+from ai.analyzers.base import stock_basic
+from ai import router
+from ai.structured import run_simple
 
 
 def build_context(stock_code: str) -> tuple:
@@ -76,12 +77,5 @@ def run(stock_code: str, save: bool = True) -> dict:
     tpl = Template(PROMPT_RISK)
     prompt = tpl.render(stock_code=info["stock_code"], short_name=info["short_name"],
                         risk_context=ctx)
-    t0 = __import__("time").time()
-    resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.2, max_tokens=1500)
-    dur = int((__import__("time").time() - t0) * 1000)
-    cost = llm.estimate_cost(resp["input_tokens"], resp["output_tokens"], resp["model"])
-    aid = save_analysis(stock_code, "risk_scan", prompt, resp["text"],
-                        resp["model"], resp["total_tokens"], cost, dur) if save else None
-    return {"analysis_id": aid, "stock_code": stock_code, "type": "risk_scan",
-            "response": resp["text"], "model": resp["model"],
-            "tokens": resp["total_tokens"], "cost_cny": cost, "duration_ms": dur}
+    return run_simple(router.TASK_RISK, stock_code, prompt, save,
+                      temperature=0.2, max_tokens=1500, atype="risk_scan")

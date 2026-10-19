@@ -6,6 +6,9 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import json
 import os
+import time
+import uuid
+import threading
 
 from fastapi import APIRouter, HTTPException, Body, Query
 from pydantic import BaseModel
@@ -109,7 +112,7 @@ def _add_backtest_routes(router: APIRouter):
         req = BacktestRequest(
             stock_code=stock_code, start=start, end=end, signal=signal,
             initial_cash=initial_cash, fill_price=fill_price, cost=cost,
-            benchmark=_benchmark_of(payload), save=bool(payload.get("save", False)),
+            benchmark=_benchmark_of(payload), save=bool(payload.get("save", True)),
         )
         try:
             result = run_backtest(req)
@@ -196,11 +199,38 @@ def _add_backtest_routes(router: APIRouter):
                 start=start or None, end=end or None, days=days,
                 initial_cash=initial_cash, fill_price=fill_price,
                 cost=cost, benchmark=_benchmark_of(payload),
-                save=bool(payload.get("save", False)), name=payload.get("name"),
+                save=bool(payload.get("save", True)), name=payload.get("name"),
             )
         except (_BacktestError, _SignalParseError) as e:
             raise HTTPException(400, str(e))
         return result
+
+    @router.post("/backtest/nl/run_with_code")
+    def backtest_run_with_code(payload: dict = Body(...)):
+        """用用户编辑后的策略代码直接重跑（跳过 LLM 生成）。"""
+        stock_code = (payload.get("stock_code") or "").strip()
+        code = payload.get("code") or ""
+        if not stock_code or not code.strip():
+            raise HTTPException(400, "stock_code 与 code 均必填")
+        try:
+            return _nl.run_backtest_with_code(
+                stock_code, code,
+                days=payload.get("days"),
+                initial_cash=float(payload.get("initial_cash", 100000) or 100000),
+                fill_price=payload.get("fill_price", "close"),
+                cost=_CostConfig(
+                    commission=float(cost_d.get("commission", 0.00025)),
+                    min_commission=float(cost_d.get("min_commission", 5.0)),
+                    stamp=float(cost_d.get("stamp", 0.0005)),
+                    transfer=float(cost_d.get("transfer", 0.00001)),
+                    slippage=float(cost_d.get("slippage", 0.0)),
+                ) if (cost_d := payload.get("cost")) else None,
+                benchmark=_benchmark_of(payload),
+                save=bool(payload.get("save", True)),
+                name=payload.get("name"),
+            )
+        except (_BacktestError, _SignalParseError) as e:
+            raise HTTPException(400, str(e))
 
     @router.get("/backtest/strategies")
     def nl_strategies(limit: int = Query(50, ge=1, le=200)):
@@ -215,6 +245,17 @@ def _add_backtest_routes(router: APIRouter):
             raise HTTPException(404, "策略记录不存在")
         return s
 
+    @router.get("/backtest/strategies/{sid}/export")
+    def nl_strategy_export(sid: str):
+        """导出某次 NL 回测记录（JSON，含生成代码/指标/命中）。"""
+        from backtest import repo as _repo
+        s = _repo.get_strategy(sid)
+        if not s:
+            raise HTTPException(404, "策略记录不存在")
+        data = json.dumps(s, ensure_ascii=False, default=str).encode("utf-8")
+        return Response(content=data, media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="bt_{sid}.json"'})
+
 
 def register_v1_1_routes(app):
     router = APIRouter(prefix="/api/v1", tags=["v1.1"])
@@ -225,7 +266,148 @@ def register_v1_1_routes(app):
     _add_exports_routes(router)
     _add_router_routes(router)
     _add_backtest_routes(router)
+    _add_screener_routes(router)
     app.include_router(router)
+
+
+# ---------------------------------------------------------------------------
+# 量化选股（NL 自然语言 → 全市场批量筛选）
+# ---------------------------------------------------------------------------
+_SCREENER_TASKS: Dict[str, dict] = {}
+
+
+def _add_screener_routes(router: APIRouter):
+    from backtest.screener import run_screener
+
+    def _run_task(task_id: str, nl: str, opts: dict):
+        task = _SCREENER_TASKS.get(task_id)
+        if task is None:
+            return
+        try:
+            def progress(scanned, total):
+                task["scanned"] = scanned
+                task["total"] = total
+
+            result = run_screener(nl, progress=progress, **opts)
+            task.update({
+                "status": "done" if result.get("ok") else "error",
+                "generated_code": result.get("generated_code"),
+                "matches": result.get("matches", []),
+                "total": result.get("total", 0),
+                "scanned": result.get("scanned", 0),
+                "skipped": result.get("skipped", 0),
+                "skipped_short": result.get("skipped_short", 0),
+                "error": result.get("error"),
+                "llm_err": result.get("llm_err"),
+                "suggestions": result.get("suggestions"),
+                "citations": result.get("citations", []),
+                "confidence": result.get("confidence", 0.3),
+                "disclaimer": result.get("disclaimer", True),
+            })
+        except Exception as e:  # 兜底，避免线程静默崩溃
+            task["status"] = "error"
+            task["error"] = f"{type(e).__name__}: {e}"
+        finally:
+            task["finished_at"] = time.time()
+            # 持久化最终结果，避免内存任务重启即丢
+            try:
+                conn = get_conn()
+                conn.execute(
+                    "INSERT OR REPLACE INTO screener_result "
+                    "(task_id, nl, params_json, generated_code, matches_json, status, error, citations_json, confidence) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [task_id, nl, json.dumps(opts, ensure_ascii=False),
+                     task.get("generated_code") or "",
+                     json.dumps(task.get("matches", []), ensure_ascii=False, default=str),
+                     task.get("status", "error"), task.get("error") or "",
+                     json.dumps(task.get("citations", []), ensure_ascii=False),
+                     float(task.get("confidence", 0.3) or 0.3)],
+                )
+            except Exception:
+                pass
+
+    @router.post("/screener/run")
+    def screener_run(payload: dict = Body(...)):
+        nl = (payload.get("nl") or "").strip()
+        if not nl:
+            raise HTTPException(400, "nl required")
+        exclude_st = bool(payload.get("exclude_st", True))
+        min_list_days = int(payload.get("min_list_days", 365) or 365)
+        task_id = uuid.uuid4().hex
+        _SCREENER_TASKS[task_id] = {
+            "status": "running", "total": 0, "scanned": 0, "matches": [],
+            "generated_code": None, "error": None, "started_at": time.time(),
+            "skipped": 0, "skipped_short": 0, "llm_err": None, "suggestions": None,
+        }
+        t = threading.Thread(
+            target=_run_task,
+            args=(task_id, nl, {"exclude_st": exclude_st, "min_list_days": min_list_days}),
+            daemon=True,
+        )
+        t.start()
+        return {"task_id": task_id, "status": "running"}
+
+    @router.get("/screener/status/{task_id}")
+    def screener_status(task_id: str):
+        task = _SCREENER_TASKS.get(task_id)
+        if not task:
+            raise HTTPException(404, "task not found")
+        return {
+            "task_id": task_id,
+            "status": task["status"],
+            "total": task["total"],
+            "scanned": task["scanned"],
+            "matches": task["matches"],
+            "generated_code": task["generated_code"],
+            "error": task["error"],
+            "llm_err": task["llm_err"],
+            "suggestions": task["suggestions"],
+            "skipped": task["skipped"],
+            "skipped_short": task["skipped_short"],
+            "citations": task.get("citations", []),
+            "confidence": task.get("confidence", 0.3),
+            "disclaimer": task.get("disclaimer", True),
+        }
+
+    @router.get("/screener/history")
+    def screener_history(limit: int = Query(50, ge=1, le=200)):
+        """历史选股任务（持久化，重启不丢）。"""
+        try:
+            conn = get_conn()
+            rows = conn.execute(
+                "SELECT task_id, nl, status, length(matches_json) AS n, created_at "
+                "FROM screener_result ORDER BY created_at DESC LIMIT ?", [limit]).fetchall()
+            return [{"task_id": r[0], "nl": r[1], "status": r[2], "match_count": r[3], "created_at": str(r[4])}
+                    for r in rows]
+        except Exception as e:
+            return {"error": str(e)}
+
+    @router.get("/screener/export/{task_id}")
+    def screener_export(task_id: str):
+        """导出某次选股结果为 CSV（命中列表）。"""
+        import csv as _csv
+        import io as _io
+        try:
+            conn = get_conn()
+            row = conn.execute(
+                "SELECT nl, matches_json FROM screener_result WHERE task_id=?", [task_id]).fetchone()
+            if not row:
+                raise HTTPException(404, "task not found")
+            matches = json.loads(row[1]) if row[1] else []
+            buf = _io.StringIO()
+            w = _csv.writer(buf)
+            if matches and isinstance(matches[0], dict):
+                cols = list(matches[0].keys())
+                w.writerow(cols)
+                for m in matches:
+                    w.writerow([m.get(c, "") for c in cols])
+            out = buf.getvalue().encode("utf-8-sig")
+            headers = {"Content-Disposition": f'attachment; filename="screener_{task_id}.csv"'}
+            return Response(content=out, media_type="text/csv; charset=utf-8", headers=headers)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, str(e))
 
 
 # ============================================================
@@ -285,7 +467,13 @@ def _add_alerts_routes(router: APIRouter):
     @router.get("/alerts/rules")
     def list_rules():
         conn = get_conn()
-        return [r.__dict__ for r in AlertRule.list_all(conn)]
+        rules = [r.__dict__ for r in AlertRule.list_all(conn)]
+        from etl.industry import get_board_map
+        board = get_board_map()
+        for r in rules:
+            # 规则目标即股票代码，补上「板块」列
+            r["industry"] = board.get(r.get("target_value"), "") or ""
+        return rules
 
     @router.post("/alerts/rules")
     def create_rule(r: AlertRuleIn):
@@ -319,12 +507,15 @@ def _add_alerts_routes(router: APIRouter):
             "FROM alert_event ORDER BY triggered_at DESC LIMIT ?",
             [limit],
         ).fetchall()
-        return [
+        from etl.industry import enrich_with_board
+        items = [
             {"event_id": r[0], "rule_id": r[1], "stock_code": r[2],
              "metric": r[3], "value": r[4], "triggered_at": str(r[5]) if r[5] else None,
              "message": r[6], "sent_status": r[7]}
             for r in rows
         ]
+        enrich_with_board(items)
+        return items
 
 
 # ============================================================

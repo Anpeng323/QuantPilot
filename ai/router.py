@@ -15,6 +15,20 @@ from typing import Any, Dict, Optional, List
 from ai import client as llm_client
 
 
+# task_type 常量（供 analyzer / agent 引用，避免硬编码字符串）
+TASK_FINANCIAL = "financial_summary"
+TASK_VALUATION = "valuation"
+TASK_RISK = "risk_scan"
+TASK_SENTIMENT = "sentiment"
+TASK_INDUSTRY = "industry_analysis"
+TASK_MACRO = "macro_analysis"
+TASK_COMPARATIVE = "comparative"
+TASK_DCF = "dcf_input"
+TASK_PROFIT = "profit_breakdown"
+TASK_COMPREHENSIVE = "review"
+TASK_RAG_QA = "rag_qa"
+
+
 # 默认路由表
 DEFAULT_CONFIG: Dict[str, str] = {
     # 深度任务

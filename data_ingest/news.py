@@ -124,10 +124,11 @@ def _ts(v):
 
 
 def save_news(rows: List[Dict]) -> int:
-    """入库 doc(doc_type='news')，按 url 去重（跨批次）。返回新增条数。"""
+    """入库 doc(doc_type='news') 并即时向量化（标题+summary）。返回新增条数。"""
     if not rows:
         return 0
     conn = get_conn()
+    pending = []
     n = 0
     for r in rows:
         url = r.get("url", "")
@@ -136,6 +137,7 @@ def save_news(rows: List[Dict]) -> int:
         doc_id = hashlib.md5(url.encode()).hexdigest()[:16]
         if conn.execute("SELECT 1 FROM doc WHERE doc_id=?", [doc_id]).fetchone():
             continue
+        summary = r.get("summary", "") or ""
         conn.execute("""
             INSERT INTO doc
             (doc_id, doc_type, source, stock_code, title, publish_date, publish_time,
@@ -144,9 +146,16 @@ def save_news(rows: List[Dict]) -> int:
         """, [doc_id, r.get("source", "unknown"), r.get("stock_code", "") or "",
               r.get("title", ""), r.get("publish_date", date.today().isoformat()),
               _ts(r.get("publish_time")),
-              url, json.dumps({"tag": r.get("tag", ""), "summary": r.get("summary", "")},
+              url, json.dumps({"tag": r.get("tag", ""), "summary": summary},
                               ensure_ascii=False)])
+        text = f"{r.get('title', '')}\n{summary}".strip()
+        pending.append((doc_id, text, r.get("stock_code", "") or "", r.get("title", "")))
         n += 1
+    if pending:
+        from knowledge.ingest import embed_batch
+        counts = embed_batch(pending, doc_type="news")
+        for (doc_id, _, _, _), cnt in zip(pending, counts):
+            conn.execute("UPDATE doc SET chunk_count=? WHERE doc_id=?", [cnt, doc_id])
     return n
 
 
@@ -211,7 +220,11 @@ def add_news(title: str, url: str, summary: str = "", source: str = "",
     """, [doc_id, source or "manual", stock_code or "", title,
           publish_date or date.today().isoformat(), _ts(publish_time), url,
           json.dumps({"tag": "手动", "summary": summary}, ensure_ascii=False)])
-    return {"doc_id": doc_id, "title": title, "status": "added"}
+    from knowledge.ingest import embed_doc
+    text = f"{title}\n{summary}".strip()
+    cnt = embed_doc(doc_id, text, doc_type="news", stock_code=stock_code or "", title=title)
+    conn.execute("UPDATE doc SET chunk_count=? WHERE doc_id=?", [cnt, doc_id])
+    return {"doc_id": doc_id, "title": title, "status": "added", "chunk_count": cnt}
 
 
 def list_news(limit: int = 30, stock_code: str = "", source: str = "",
@@ -263,6 +276,8 @@ def list_news(limit: int = 30, stock_code: str = "", source: str = "",
             "tag": meta.get("tag", ""),
             "summary": meta.get("summary", ""),
         })
+    from etl.industry import enrich_with_board
+    enrich_with_board(out)
     return out
 
 

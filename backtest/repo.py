@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS strategy_record (
 _ensured = False
 
 
+def _to_iso_date(s) -> str | None:
+    """将日期规范为 DuckDB DATE 可接受的 'YYYY-MM-DD'。
+
+    兼容 '20230101' 与 '2023-01-01' 两种常见格式；其余原样返回。
+    """
+    if not s:
+        return None
+    s = str(s).strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s
+
+
 def _ensure():
     global _ensured
     if _ensured:
@@ -78,7 +91,7 @@ def save_task(req, result: dict) -> str:
             "INSERT INTO backtest_task"
             "(task_id, stock_code, start_date, end_date, signal, initial_cash, fill_price, benchmark) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            [task_id, req.stock_code, req.start, req.end, req.signal,
+            [task_id, req.stock_code, _to_iso_date(req.start), _to_iso_date(req.end), req.signal,
              req.initial_cash, req.fill_price, req.benchmark],
         )
         conn.execute(

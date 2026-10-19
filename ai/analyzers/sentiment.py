@@ -5,9 +5,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from jinja2 import Template
 from etl.db import get_conn
-from ai import client as llm
 from ai.prompts import PROMPT_SENTIMENT
-from ai.analyzers.base import stock_basic, save_analysis
+from ai.analyzers.base import stock_basic
+from ai import router
+from ai.structured import run_simple
 
 
 def run(stock_code: str, save: bool = True) -> dict:
@@ -31,12 +32,10 @@ def run(stock_code: str, save: bool = True) -> dict:
 
     tpl = Template(PROMPT_SENTIMENT)
     prompt = tpl.render(reports_context=ctx)
-    t0 = __import__("time").time()
-    resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=1200)
-    dur = int((__import__("time").time() - t0) * 1000)
-    cost = llm.estimate_cost(resp["input_tokens"], resp["output_tokens"], resp["model"])
-    aid = save_analysis(stock_code, "sentiment", prompt, resp["text"],
-                        resp["model"], resp["total_tokens"], cost, dur) if save else None
-    return {"analysis_id": aid, "stock_code": stock_code, "type": "sentiment",
-            "response": resp["text"], "model": resp["model"],
-            "tokens": resp["total_tokens"], "cost_cny": cost, "duration_ms": dur}
+    doc_citations = [
+        {"type": "doc", "ref": d[0], "label": f"研报：{d[1]}", "date": str(d[2] or "")}
+        for d in docs
+    ] if docs else None
+    return run_simple(router.TASK_SENTIMENT, stock_code, prompt, save,
+                      temperature=0.3, max_tokens=1200, atype="sentiment",
+                      doc_citations=doc_citations)
